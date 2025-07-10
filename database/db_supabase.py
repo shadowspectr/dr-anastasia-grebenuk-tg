@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional
 from dataclasses import asdict
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 # Используем только официальную библиотеку supabase
 from supabase import create_client, Client as SupabaseConnection
@@ -10,18 +10,50 @@ from .models import Appointment, Service, ServiceCategory
 logger = logging.getLogger(__name__)
 
 
+def parse_datetime(iso_string: Optional[str]) -> Optional[datetime]:
+    """Вспомогательная функция для парсинга дат из Supabase."""
+    if not iso_string:
+        return None
+    try:
+        # Supabase может возвращать дату с 'Z' или с '+00:00'
+        iso_string = iso_string.replace('Z', '+00:00')
+        # Отбрасываем информацию о таймзоне, если она есть, для простоты
+        if '+' in iso_string:
+            iso_string = iso_string.split('+')[0]
+        # Парсим строку
+        return datetime.fromisoformat(iso_string)
+    except (ValueError, TypeError):
+        logger.warning(f"Could not parse datetime string: {iso_string}")
+        return None
+
+
 class Database:
     def __init__(self, url: str, key: str):
-        # Создаем обычный, синхронный клиент
         self.client: SupabaseConnection = create_client(url, key)
 
-    # --- Методы для Услуг и Категорий ---
-    # Функции остаются async def, потому что их вызывает aiogram,
-    # но внутри они выполняют блокирующий (синхронный) код.
+    async def _process_appointment_rows(self, rows: List[dict]) -> List[Appointment]:
+        """Вспомогательный метод для обработки списка записей."""
+        appointments = []
+        for row in rows:
+            service_data = row.pop('services', None)
 
+            # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
+            # Преобразуем строку времени в объект datetime
+            row['appointment_time'] = parse_datetime(row.get('appointment_time'))
+            if not row['appointment_time']:
+                continue  # Пропускаем запись, если дата некорректна
+
+            row['created_at'] = parse_datetime(row.get('created_at'))
+            # ---------------------------
+
+            app = Appointment(**row)
+            app.service_title = service_data['title'] if service_data else "Удаленная услуга"
+            appointments.append(app)
+        return appointments
+
+    # ... (методы для услуг остаются без изменений) ...
     async def get_service_categories(self) -> List[ServiceCategory]:
         try:
-            # Убираем await, так как вызов синхронный
             response = self.client.table('service_categories').select('*').order('title').execute()
             if not response.data: return []
             return [ServiceCategory(**row) for row in response.data]
@@ -78,13 +110,8 @@ class Database:
             response = query.execute()
             if not response.data: return []
 
-            appointments = []
-            for row in response.data:
-                service_data = row.pop('services', None)
-                app = Appointment(**row)
-                app.service_title = service_data['title'] if service_data else "Удаленная услуга"
-                appointments.append(app)
-            return appointments
+            # Используем вспомогательный метод для обработки
+            return await self._process_appointment_rows(response.data)
         except Exception as e:
             logger.error(f"Error getting appointments for day: {e}")
             return []
@@ -95,11 +122,47 @@ class Database:
                 1).execute()
             if not response.data: return None
 
-            row = response.data[0]
-            service_data = row.pop('services', None)
-            app = Appointment(**row)
-            app.service_title = service_data['title'] if service_data else "Удаленная услуга"
-            return app
+            # Используем вспомогательный метод (он вернет список из одного элемента)
+            processed_app = await self._process_appointment_rows(response.data)
+            return processed_app[0] if processed_app else None
         except Exception as e:
             logger.error(f"Error getting appointment by id: {e}")
             return None
+
+    # Переписываем метод для планировщика тоже
+    async def get_upcoming_appointments_to_remind(self) -> List[Appointment]:
+        tomorrow = datetime.now() + timedelta(days=1)
+        tomorrow_start = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        tomorrow_end = tomorrow.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+
+        try:
+            query = self.client.table('appointments').select('*, services(title)').gte('appointment_time',
+                                                                                       tomorrow_start).lte(
+                'appointment_time', tomorrow_end).eq('status', 'active').eq('reminded', False)
+            response = query.execute()
+            if not response.data: return []
+            return await self._process_appointment_rows(response.data)
+        except Exception as e:
+            logger.error(f"Error getting upcoming appointments: {e}")
+            return []
+
+    # Методы обновления остаются без изменений
+    async def mark_as_reminded(self, appointment_id: str):
+        try:
+            self.client.table('appointments').update({'reminded': True}).eq('id', appointment_id).execute()
+        except Exception as e:
+            logger.error(f"Error marking as reminded for id {appointment_id}: {e}")
+
+    async def update_appointment_status(self, appointment_id: str, status: str):
+        try:
+            self.client.table('appointments').update({'status': status}).eq('id', appointment_id).execute()
+        except Exception as e:
+            logger.error(f"Error updating status for id {appointment_id}: {e}")
+
+    async def delete_appointment(self, appointment_id: str) -> bool:
+        try:
+            response = self.client.table('appointments').delete().eq('id', appointment_id).execute()
+            return len(response.data) > 0
+        except Exception as e:
+            logger.error(f"Error deleting appointment id {appointment_id}: {e}")
+            return False
