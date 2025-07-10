@@ -1,14 +1,9 @@
-# Явно указываем pydantic v1
-pydantic<2
-
-# Явно указываем pydantic-settings, совместимый с pydantic v1
-pydantic-settings<2
-
-# aiogram 3.3.0 совместим с pydantic v1
-aiogram==3.3.0
-
-# Остальные зависимости
+# Самые свежие версии, так как Dockerfile установит Rust
+aiogram==3.4.1
 supabase==2.16.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
-# certifi и aiohttp-proxy на всякий случай, если они нужны локально
+pydantic-settings==2.2.1
+# certifi и aiohttp-proxy на случай, если они нужны локально
+certifi
+aiohttp-proxy
