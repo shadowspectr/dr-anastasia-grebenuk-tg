@@ -7,4 +7,3 @@ supabase==2.16.0  # Можете вернуть последнюю версию 
 apscheduler==3.10.4
 python-dotenv==1.0.1
 pydantic-settings==2.2.1
-aiohttp-proxy==0.7.4
