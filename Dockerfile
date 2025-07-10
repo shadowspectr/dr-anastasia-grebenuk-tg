@@ -24,4 +24,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Шаг 7: Указываем команду, которая будет запущена при старте контейнера
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--worker-class", "aiohttp.GunicornWebWorker", "main:app"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:10000", "main:app"]
