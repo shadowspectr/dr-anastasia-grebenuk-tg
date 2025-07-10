@@ -1,9 +1,13 @@
-# Самые свежие версии, так как Dockerfile установит Rust
+# requirements.txt
+
 aiogram==3.4.1
 supabase==2.16.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 pydantic-settings==2.2.1
-# certifi и aiohttp-proxy на случай, если они нужны локально
 certifi
 aiohttp-proxy
+
+# Новые зависимости для веб-сервиса
+flask==3.0.3
+gunicorn==22.0.0
