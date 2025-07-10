@@ -1,3 +1,4 @@
+import logging
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from datetime import datetime
@@ -7,12 +8,15 @@ from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 # Старт флоу записи
 @router.callback_query(F.data == "client_book")
 async def client_start_booking(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    await callback.message.edit_text("Выберите категорию услуг:", reply_markup=get_service_categories_keyboard(db))
+    # Методы клавиатур теперь тоже могут быть асинхронными, если они делают запросы к БД
+    keyboard = await get_service_categories_keyboard(db)
+    await callback.message.edit_text("Выберите категорию услуг:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_category)
 
 
@@ -21,7 +25,8 @@ async def client_start_booking(callback: types.CallbackQuery, state: FSMContext,
 async def client_pick_category(callback: types.CallbackQuery, state: FSMContext, db: Database):
     category_id = callback.data.split("_")[1]
     await state.update_data(category_id=category_id)
-    await callback.message.edit_text("Теперь выберите услугу:", reply_markup=get_services_keyboard(db, category_id))
+    keyboard = await get_services_keyboard(db, category_id)
+    await callback.message.edit_text("Теперь выберите услугу:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_service)
 
 
@@ -29,7 +34,13 @@ async def client_pick_category(callback: types.CallbackQuery, state: FSMContext,
 @router.callback_query(ClientStates.waiting_for_service, F.data.startswith("service_"))
 async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, db: Database):
     service_id = callback.data.split("_")[1]
-    service = db.get_service_by_id(service_id)
+    # Используем await, так как метод теперь асинхронный
+    service = await db.get_service_by_id(service_id)
+
+    if not service:
+        await callback.answer("Услуга не найдена, попробуйте снова.", show_alert=True)
+        return
+
     await state.update_data(service_id=service_id, service_title=service.title, service_price=service.price)
     await callback.message.edit_text(f"Вы выбрали: {service.title}.\nТеперь выберите удобный день:",
                                      reply_markup=get_date_keyboard())
@@ -48,8 +59,9 @@ async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db:
     date_str = callback.data.split("_")[1]
     await state.update_data(date=date_str)
     target_date = datetime.strptime(date_str, '%Y-%m-%d')
+    keyboard = await get_time_slots_keyboard(target_date, db)
     await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
-                                     reply_markup=get_time_slots_keyboard(target_date, db))
+                                     reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_time)
 
 
@@ -86,7 +98,8 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         # client_phone можно запросить дополнительно
     )
 
-    appointment_id = db.add_appointment(new_appointment)
+    # Используем await, так как метод теперь асинхронный
+    appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
         await callback.message.edit_text(
@@ -103,4 +116,5 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
 @router.callback_query(F.data == "cancel_booking")
 async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    # Эта клавиатура не делает запросов в БД, поэтому await не нужен
     await callback.message.edit_text("Запись отменена.", reply_markup=get_client_main_keyboard())

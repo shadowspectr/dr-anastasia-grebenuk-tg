@@ -5,24 +5,26 @@ from datetime import datetime, timedelta
 
 
 def get_client_main_keyboard():
+    # Эта функция не обращается к БД, остается синхронной
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📅 Записаться на услугу", callback_data="client_book"))
-    # Можно добавить "Мои записи", "Контакты" и т.д.
     return builder.as_markup()
 
 
-def get_service_categories_keyboard(db: Database):
+async def get_service_categories_keyboard(db: Database):
     builder = InlineKeyboardBuilder()
-    categories = db.get_service_categories()
+    # Используем await
+    categories = await db.get_service_categories()
     for category in categories:
         builder.add(InlineKeyboardButton(text=category.title, callback_data=f"category_{category.id}"))
     builder.adjust(1)
     return builder.as_markup()
 
 
-def get_services_keyboard(db: Database, category_id: str):
+async def get_services_keyboard(db: Database, category_id: str):
     builder = InlineKeyboardBuilder()
-    services = db.get_services_by_category(category_id)
+    # Используем await
+    services = await db.get_services_by_category(category_id)
     for service in services:
         builder.add(
             InlineKeyboardButton(text=f"{service.title} ({service.price} ₽)", callback_data=f"service_{service.id}"))
@@ -32,25 +34,27 @@ def get_services_keyboard(db: Database, category_id: str):
 
 
 def get_date_keyboard():
+    # Эта функция не обращается к БД, остается синхронной
     builder = InlineKeyboardBuilder()
     today = datetime.now()
     builder.add(InlineKeyboardButton(text="Сегодня", callback_data=f"date_{today.strftime('%Y-%m-%d')}"))
     builder.add(
         InlineKeyboardButton(text="Завтра", callback_data=f"date_{(today + timedelta(days=1)).strftime('%Y-%m-%d')}"))
-    # Для полноценного календаря используйте библиотеку aiogram-calendar
     return builder.as_markup()
 
 
-def get_time_slots_keyboard(target_date: datetime, db: Database):
+async def get_time_slots_keyboard(target_date: datetime, db: Database):
     builder = InlineKeyboardBuilder()
-    appointments = db.get_appointments_for_day(target_date, status='active')
+    # Используем await
+    appointments = await db.get_appointments_for_day(target_date, status='active')
     busy_times = [app.appointment_time.time() for app in appointments]
 
     time_slots = []
-    for hour in range(9, 19):  # с 9:00 до 18:30
+    # ... логика генерации слотов остается без изменений ...
+    for hour in range(9, 19):
         for minute in [0, 30]:
             if target_date.date() == datetime.now().date() and hour < datetime.now().hour:
-                continue  # Пропускаем прошедшие часы для сегодня
+                continue
             time_slot = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
             if time_slot not in busy_times:
                 time_slots.append(time_slot)
@@ -68,6 +72,7 @@ def get_time_slots_keyboard(target_date: datetime, db: Database):
 
 
 def get_confirmation_keyboard():
+    # Эта функция не обращается к БД, остается синхронной
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="✅ Подтвердить запись", callback_data="confirm_booking"))
     builder.add(InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_booking"))
