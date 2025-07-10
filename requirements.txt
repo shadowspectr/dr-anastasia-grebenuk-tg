@@ -12,5 +12,3 @@ supabase==2.16.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 # certifi и aiohttp-proxy на всякий случай, если они нужны локально
-certifi==2024.2.2
-aiohttp-proxy==0.7.4
