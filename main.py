@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from flask import Flask, request, abort
+from asgiref.wsgi import WsgiToAsgi  # <-- НОВЫЙ ИМПОРТ
 
 from config_reader import config
 from database.db_supabase import Database
@@ -22,15 +23,22 @@ default_properties = DefaultBotProperties(parse_mode="HTML")
 
 bot = Bot(token=config.bot_token, default=default_properties)
 dp = Dispatcher(storage=storage)
-app = Flask(__name__)
+
+# --- Создание Flask-приложения ---
+# Это все еще обычное WSGI-приложение
+flask_app = Flask(__name__)
+
+# --- Оборачиваем WSGI-приложение в ASGI-совместимую обертку ---
+# Теперь uvicorn будет работать с этим объектом
+app = WsgiToAsgi(flask_app)
 
 # --- Вебхук ---
-# Лучше вынести секрет в переменные окружения для безопасности
+# Важно: мы все еще используем @flask_app.route, а не @app.route
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "default-super-secret")
 WEBHOOK_URL = f"{config.web_server_url}{config.webhook_path}"
 
 
-@app.route(config.webhook_path, methods=["POST"])
+@flask_app.route(config.webhook_path, methods=["POST"])
 async def webhook():
     if request.headers.get('X-Telegram-Bot-Api-Secret-Token') != WEBHOOK_SECRET:
         logger.warning("Incorrect secret token received!")
@@ -38,7 +46,6 @@ async def webhook():
 
     update_data = await request.get_json()
     update = types.Update.model_validate(update_data, context={"bot": bot})
-    # Передаем db в обработчик, чтобы он был доступен в хэндлерах
     await dp.feed_update(bot=bot, update=update, db=db)
 
     return "OK"
@@ -49,12 +56,10 @@ async def on_startup(dispatcher: Dispatcher):
     logger.info("Starting bot and setting webhook...")
     await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
 
-    # Регистрация роутеров
     dispatcher.include_router(common_handlers.router)
     dispatcher.include_router(admin_handlers.router)
     dispatcher.include_router(client_handlers.router)
 
-    # Запуск планировщика
     scheduler = setup_scheduler(bot, db)
     scheduler.start()
 
@@ -68,17 +73,12 @@ async def on_shutdown(dispatcher: Dispatcher):
 
 
 def main():
-    # Эта функция больше не нужна для запуска, но может пригодиться для локальных тестов
     logger.info("To run locally, use 'uvicorn main:app --reload'")
 
 
 # --- Регистрация функций жизненного цикла ---
-# Важно! Это должно быть в глобальной области видимости,
-# чтобы gunicorn/uvicorn могли это увидеть при импорте.
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
 
 if __name__ == "__main__":
-    # Эта часть для локального запуска
-    # uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     main()
