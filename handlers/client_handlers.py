@@ -1,11 +1,12 @@
 import logging
-from aiogram import Router, types, F
+from aiogram import Router, types, F, Bot # <-- Добавляем Bot в импорты
 from aiogram.fsm.context import FSMContext
 from datetime import datetime
 from database.db_supabase import Database
 from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
+from utils.notifications import notify_admin_on_new_booking # <-- НОВЫЙ ИМПОРТ
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
 
 # Шаг 6: Подтверждение
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database):
+async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
     user = callback.from_user
 
@@ -95,18 +96,31 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         client_telegram_id=user.id,
         service_id=data['service_id'],
         appointment_time=appointment_dt
-        # client_phone можно запросить дополнительно
     )
 
-    # Используем await, так как метод теперь асинхронный
     appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
+        # Успешно записались, отправляем подтверждение клиенту
         await callback.message.edit_text(
             "✅ Вы успешно записаны!\n\n"
             "Вам придет напоминание за день до визита. Ждем вас!"
         )
+
+        # --- ОТПРАВКА УВЕДОМЛЕНИЯ АДМИНИСТРАТОРУ ---
+        # Добавляем ID к нашему объекту для полноты данных
+        new_appointment.id = appointment_id
+        # Вызываем нашу новую функцию
+        await notify_admin_on_new_booking(
+            bot=bot,
+            appointment=new_appointment,
+            service_title=data['service_title'],
+            service_price=data['service_price']
+        )
+        # --------------------------------------------
+
     else:
+        # Если произошла ошибка при записи
         await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
 
     await state.clear()
