@@ -1,8 +1,16 @@
-# Используем aiogram 3.3.0, который совместим с pydantic v1
+# Явно указываем pydantic v1
+pydantic<2
+
+# Явно указываем pydantic-settings, совместимый с pydantic v1
+pydantic-settings<2
+
+# aiogram 3.3.0 совместим с pydantic v1
 aiogram==3.3.0
 
 # Остальные зависимости
 supabase==2.16.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
-pydantic-settings==2.2.1
+# certifi и aiohttp-proxy на всякий случай, если они нужны локально
+certifi==2024.2.2
+aiohttp-proxy==0.7.4
