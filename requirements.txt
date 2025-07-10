@@ -1,5 +1,10 @@
+# Явно указываем старую версию pydantic, которая не требует Rust
+pydantic<2
+
+# Основные зависимости
 aiogram==3.4.1
-supabase==1.0.6
+supabase==2.16.0  # Можете вернуть последнюю версию supabase, он был не виноват
 apscheduler==3.10.4
 python-dotenv==1.0.1
 pydantic-settings==2.2.1
+aiohttp-proxy==0.7.4
