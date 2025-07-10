@@ -1,24 +1,28 @@
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from dataclasses import asdict
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 
-from supabase import create_client, Client as SupabaseConnection, AClient as AsyncSupabaseConnection
+from supabase_async import create_client, AsyncClient
 from .models import Appointment, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
 
 
+# Чтобы избежать путаницы, явно импортируем и используем async-версию
+# pip install supabase-async
+
 class Database:
     def __init__(self, url: str, key: str):
         # Используем асинхронный клиент для всех операций
-        self.async_client: AsyncSupabaseConnection = create_client(url, key)
+        self.async_client: AsyncClient = create_client(url, key)
 
     # --- Методы для Услуг и Категорий ---
 
     async def get_service_categories(self) -> List[ServiceCategory]:
         try:
-            response = await self.async_client.table('service_categories').select('*').order('title').execute()
+            # Убираем .execute() и ожидаем сам .select()
+            response = await self.async_client.table('service_categories').select('*').order('title').get()
             if not response.data: return []
             return [ServiceCategory(**row) for row in response.data]
         except Exception as e:
@@ -28,7 +32,7 @@ class Database:
     async def get_services_by_category(self, category_id: str) -> List[Service]:
         try:
             response = await self.async_client.table('services').select('*').eq('category_id', category_id).order(
-                'title').execute()
+                'title').get()
             if not response.data: return []
             return [Service(**row) for row in response.data]
         except Exception as e:
@@ -37,9 +41,11 @@ class Database:
 
     async def get_service_by_id(self, service_id: str) -> Optional[Service]:
         try:
-            response = await self.async_client.table('services').select('*').eq('id', service_id).limit(1).execute()
+            response = await self.async_client.table('services').select('*').eq('id', service_id).limit(
+                1).single().get()
             if not response.data: return None
-            return Service(**response.data[0])
+            # .single() возвращает один объект, а не список
+            return Service(**response.data)
         except Exception as e:
             logger.error(f"Error getting service by id: {e}")
             return None
@@ -53,9 +59,7 @@ class Database:
         appointment_dict['appointment_time'] = appointment.appointment_time.isoformat()
 
         try:
-            # Сначала делаем insert
-            response = await self.async_client.table('appointments').insert(appointment_dict).execute()
-            # ID теперь находится в данных ответа
+            response = await self.async_client.table('appointments').insert(appointment_dict).get()
             if response.data:
                 return response.data[0]['id']
             return None
@@ -74,7 +78,7 @@ class Database:
             if status:
                 query = query.eq('status', status)
 
-            response = await query.execute()
+            response = await query.get()
             if not response.data: return []
 
             appointments = []
@@ -88,17 +92,14 @@ class Database:
             logger.error(f"Error getting appointments for day: {e}")
             return []
 
-    # ... и так далее для всех методов ...
-    # Я перепишу остальные тоже для единообразия и правильности
-
     async def get_appointment_by_id(self, appointment_id: str) -> Optional[Appointment]:
         try:
             response = await self.async_client.table('appointments').select('*, services(title)').eq('id',
                                                                                                      appointment_id).limit(
-                1).execute()
+                1).single().get()
             if not response.data: return None
 
-            row = response.data[0]
+            row = response.data
             service_data = row.pop('services', None)
             app = Appointment(**row)
             app.service_title = service_data['title'] if service_data else "Удаленная услуга"
