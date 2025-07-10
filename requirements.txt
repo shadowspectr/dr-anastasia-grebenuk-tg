@@ -1,12 +1,12 @@
 # requirements.txt
-
+# requirements.txt
 aiogram==3.4.1
 supabase==2.16.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 pydantic-settings==2.2.1
 certifi
-aiohttp-proxy
+aiohttp==3.9.5 # Добавляем явно
 
 # Новые зависимости для веб-сервиса
 flask==3.0.3
