@@ -81,6 +81,40 @@ class Database:
 
     # --- Методы для Записей (Appointments) ---
 
+    async def get_upcoming_appointments_to_remind(self) -> List[Appointment]:
+        # Определяем начало и конец завтрашнего дня
+        tomorrow_start = (datetime.now() + timedelta(days=1)).replace(hour=0, minute=0, second=0,
+                                                                      microsecond=0).isoformat()
+        tomorrow_end = (datetime.now() + timedelta(days=1)).replace(hour=23, minute=59, second=59,
+                                                                    microsecond=999999).isoformat()
+
+        try:
+            query = self.async_client.table('appointments').select('*, services(title)') \
+                .gte('appointment_time', tomorrow_start) \
+                .lte('appointment_time', tomorrow_end) \
+                .eq('status', 'active') \
+                .eq('reminded', False)
+
+            response = await query.get()
+            if not response.data: return []
+
+            appointments = []
+            for row in response.data:
+                service_data = row.pop('services', None)
+                app = Appointment(**row)
+                app.service_title = service_data['title'] if service_data else "Удаленная услуга"
+                appointments.append(app)
+            return appointments
+        except Exception as e:
+            logger.error(f"Error getting upcoming appointments to remind: {e}")
+            return []
+
+    async def mark_as_reminded(self, appointment_id: str):
+        try:
+            await self.async_client.table('appointments').update({'reminded': True}).eq('id', appointment_id).execute()
+        except Exception as e:
+            logger.error(f"Error marking appointment as reminded: {e}")
+
     async def add_appointment(self, appointment: Appointment) -> Optional[str]:
         appointment_dict = asdict(appointment)
         for key in ['id', 'created_at', 'service_title']:
