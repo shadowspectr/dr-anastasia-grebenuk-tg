@@ -12,10 +12,10 @@ from aiohttp import web
 from config_reader import config
 from database.db_supabase import Database
 from handlers import common_handlers, admin_handlers, client_handlers
-from utils.scheduler import setup_scheduler
+
+# from utils.scheduler import setup_scheduler # --- ОТКЛЮЧЕНО ДЛЯ ДИАГНОСТИКИ ---
 
 # --- 1. Настройка логирования ---
-# Устанавливаем уровень DEBUG, чтобы видеть все сообщения
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -33,17 +33,10 @@ error_router = Router()
 
 @error_router.errors()
 async def error_handler(exception_update: types.ErrorEvent):
-    """
-    Ловит все исключения, которые происходят при обработке обновлений.
-    """
     update = exception_update.update
     exception = exception_update.exception
-
     logger.error(f"Произошла критическая ошибка при обработке апдейта {update.update_id}")
-    # Выводим полный трейсбек ошибки в консоль (логи Render)
     logger.exception(exception)
-
-    # Пытаемся отправить сообщение об ошибке администратору
     try:
         await bot.send_message(
             config.admin_id,
@@ -52,12 +45,8 @@ async def error_handler(exception_update: types.ErrorEvent):
             f"<b>Текст ошибки:</b> {exception}\n"
             f"<b>Апдейт:</b> <code>{update.model_dump_json(indent=2, exclude_none=True)}</code>"
         )
-    except TelegramAPIError:
-        logger.error("Не удалось отправить сообщение об ошибке админу.")
-    except Exception as e:
-        logger.error(f"Неизвестная ошибка при отправке сообщения админу: {e}")
-
-    # Важно вернуть True, чтобы aiogram знал, что ошибка обработана
+    except (TelegramAPIError, Exception) as e:
+        logger.error(f"Не удалось отправить сообщение об ошибке админу: {e}")
     return True
 
 
@@ -70,13 +59,8 @@ WEBHOOK_URL = f"{config.web_server_url}{config.webhook_path}"
 async def on_startup(dispatcher: Dispatcher, bot: Bot):
     logger.info("Starting bot and setting webhook...")
 
-    # Устанавливаем вебхук
-    try:
-        await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
-        logger.info(f"Webhook is set to {WEBHOOK_URL}")
-    except TelegramAPIError as e:
-        logger.error(f"Failed to set webhook: {e}")
-        # Здесь можно добавить логику аварийной остановки, если вебхук критичен
+    await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
+    logger.info(f"Webhook is set to {WEBHOOK_URL}")
 
     # Регистрируем обработчик ошибок ПЕРВЫМ
     dispatcher.include_router(error_router)
@@ -86,24 +70,23 @@ async def on_startup(dispatcher: Dispatcher, bot: Bot):
     dispatcher.include_router(admin_handlers.router)
     dispatcher.include_router(client_handlers.router)
 
-    # Запускаем планировщик
-    scheduler = setup_scheduler(bot, db)
-    scheduler.start()
+    # --- ОТКЛЮЧЕНО ДЛЯ ДИАГНОСТИКИ ---
+    # scheduler = setup_scheduler(bot, db)
+    # scheduler.start()
+    logger.info("Scheduler is DISABLED for debugging.")
 
     logger.info("Bot startup complete.")
 
 
 async def on_shutdown(dispatcher: Dispatcher, bot: Bot):
     logger.info("Shutting down bot and deleting webhook...")
-    try:
-        await bot.delete_webhook()
-        logger.info("Webhook deleted.")
-    except TelegramAPIError as e:
-        logger.error(f"Failed to delete webhook: {e}")
+    await bot.delete_webhook()
+    logger.info("Webhook deleted.")
 
-    scheduler = dispatcher.get("scheduler")
-    if scheduler:
-        scheduler.shutdown()
+    # --- ОТКЛЮЧЕНО ДЛЯ ДИАГНОСТИКИ ---
+    # scheduler = dispatcher.get("scheduler")
+    # if scheduler:
+    #     scheduler.shutdown()
 
     logger.info("Bot shutdown complete.")
 
@@ -122,8 +105,7 @@ def main():
         dispatcher=dp,
         bot=bot,
         secret_token=WEBHOOK_SECRET,
-        db=db,  # Передаем db, чтобы он был доступен в хэндлерах
-        scheduler=setup_scheduler(bot, db)  # Передаем планировщик
+        db=db  # Передаем db, чтобы он был доступен в хэндлерах
     )
 
     # Регистрируем обработчик по нашему секретному пути
