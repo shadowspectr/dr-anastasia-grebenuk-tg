@@ -1,9 +1,10 @@
+import asyncio
 import logging
 import os
-import asyncio
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types, Router
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
@@ -13,88 +14,134 @@ from database.db_supabase import Database
 from handlers import common_handlers, admin_handlers, client_handlers
 from utils.scheduler import setup_scheduler
 
-# --- Глобальные переменные ---
-# Инициализируем все на верхнем уровне, чтобы они были доступны везде
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+# --- 1. Настройка логирования ---
+# Устанавливаем уровень DEBUG, чтобы видеть все сообщения
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Объекты, которые нужны для работы бота
+# --- 2. Инициализация основных объектов ---
 db = Database(url=config.supabase_url, key=config.supabase_key)
 storage = MemoryStorage()
 default_properties = DefaultBotProperties(parse_mode="HTML")
+
 bot = Bot(token=config.bot_token, default=default_properties)
 dp = Dispatcher(storage=storage)
 
-# Переменные для вебхука
+# --- 3. Глобальный обработчик ошибок ---
+error_router = Router()
+
+
+@error_router.errors()
+async def error_handler(exception_update: types.ErrorEvent):
+    """
+    Ловит все исключения, которые происходят при обработке обновлений.
+    """
+    update = exception_update.update
+    exception = exception_update.exception
+
+    logger.error(f"Произошла критическая ошибка при обработке апдейта {update.update_id}")
+    # Выводим полный трейсбек ошибки в консоль (логи Render)
+    logger.exception(exception)
+
+    # Пытаемся отправить сообщение об ошибке администратору
+    try:
+        await bot.send_message(
+            config.admin_id,
+            f"<b>❗️ Произошла ошибка в боте!</b>\n\n"
+            f"<b>Тип ошибки:</b> {type(exception).__name__}\n"
+            f"<b>Текст ошибки:</b> {exception}\n"
+            f"<b>Апдейт:</b> <code>{update.model_dump_json(indent=2, exclude_none=True)}</code>"
+        )
+    except TelegramAPIError:
+        logger.error("Не удалось отправить сообщение об ошибке админу.")
+    except Exception as e:
+        logger.error(f"Неизвестная ошибка при отправке сообщения админу: {e}")
+
+    # Важно вернуть True, чтобы aiogram знал, что ошибка обработана
+    return True
+
+
+# --- 4. Переменные для вебхука ---
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "default-super-secret")
-WEBHOOK_PATH = config.webhook_path
-BASE_WEBHOOK_URL = config.web_server_url
+WEBHOOK_URL = f"{config.web_server_url}{config.webhook_path}"
 
 
-async def on_startup(bot: Bot, dispatcher: Dispatcher):
-    """
-    Функция, выполняемая при старте приложения.
-    Устанавливает вебхук и запускает планировщик.
-    """
-    logger.info("Configuring webhook...")
-    await bot.set_webhook(
-        url=f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}",
-        secret_token=WEBHOOK_SECRET
-    )
+# --- 5. Функции жизненного цикла приложения ---
+async def on_startup(dispatcher: Dispatcher, bot: Bot):
+    logger.info("Starting bot and setting webhook...")
 
-    logger.info("Starting scheduler...")
-    scheduler = setup_scheduler(bot, db)
-    scheduler.start()
-    logger.info("Startup complete.")
+    # Устанавливаем вебхук
+    try:
+        await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
+        logger.info(f"Webhook is set to {WEBHOOK_URL}")
+    except TelegramAPIError as e:
+        logger.error(f"Failed to set webhook: {e}")
+        # Здесь можно добавить логику аварийной остановки, если вебхук критичен
 
+    # Регистрируем обработчик ошибок ПЕРВЫМ
+    dispatcher.include_router(error_router)
 
-async def on_shutdown(bot: Bot, dispatcher: Dispatcher):
-    """
-
-    Функция, выполняемая при завершении работы.
-    """
-    logger.info("Shutting down...")
-    await bot.delete_webhook()
-    # Планировщик остановится сам при завершении процесса
-    logger.info("Shutdown complete.")
-
-
-def setup_handlers(dispatcher: Dispatcher):
-    """
-    Регистрирует все роутеры.
-    """
-    logger.info("Configuring handlers...")
+    # Регистрируем остальные роутеры
     dispatcher.include_router(common_handlers.router)
     dispatcher.include_router(admin_handlers.router)
     dispatcher.include_router(client_handlers.router)
 
+    # Запускаем планировщик
+    scheduler = setup_scheduler(bot, db)
+    scheduler.start()
 
-# --- Основная точка входа ---
-if __name__ == "__main__":
-    # 1. Регистрируем хэндлеры
-    setup_handlers(dp)
+    logger.info("Bot startup complete.")
 
-    # 2. Регистрируем функции startup/shutdown
+
+async def on_shutdown(dispatcher: Dispatcher, bot: Bot):
+    logger.info("Shutting down bot and deleting webhook...")
+    try:
+        await bot.delete_webhook()
+        logger.info("Webhook deleted.")
+    except TelegramAPIError as e:
+        logger.error(f"Failed to delete webhook: {e}")
+
+    scheduler = dispatcher.get("scheduler")
+    if scheduler:
+        scheduler.shutdown()
+
+    logger.info("Bot shutdown complete.")
+
+
+# --- 6. Основная функция запуска ---
+def main():
+    # Регистрация функций жизненного цикла
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    # 3. Создаем веб-приложение aiohttp
+    # Создаем веб-приложение aiohttp
     app = web.Application()
 
-    # 4. Создаем и регистрируем обработчик вебхуков
-    webhook_request_handler = SimpleRequestHandler(
+    # Создаем обработчик вебхуков для aiogram
+    webhook_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
         secret_token=WEBHOOK_SECRET,
-        db=db  # Передаем db в каждый апдейт
+        db=db,  # Передаем db, чтобы он был доступен в хэндлерах
+        scheduler=setup_scheduler(bot, db)  # Передаем планировщик
     )
-    webhook_request_handler.register(app, path=WEBHOOK_PATH)
 
-    # 5. Передаем управление в aiogram для запуска
+    # Регистрируем обработчик по нашему секретному пути
+    webhook_handler.register(app, path=config.webhook_path)
+
+    # Добавляем "проверку здоровья" на главную страницу
+    async def health_check(request):
+        return web.Response(text="Bot is running!")
+
+    app.router.add_get("/", health_check)
+
+    # Запускаем веб-сервер aiohttp "из коробки"
     setup_application(app, dp, bot=bot)
 
-    # 6. Запускаем веб-сервер
-    # host='0.0.0.0' - слушать на всех интерфейсах
-    # port=10000 - порт, который слушает Render
-    logger.info("Starting aiohttp server...")
-    web.run_app(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    # Определяем порт для Render
+    port = int(os.environ.get("PORT", 10000))
+    web.run_app(app, host="0.0.0.0", port=port)
+
+
+if __name__ == "__main__":
+    main()
