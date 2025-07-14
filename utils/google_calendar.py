@@ -40,6 +40,45 @@ class GoogleCalendar:
         return cls._service
 
     @classmethod
+    async def find_event_by_datetime(cls, appointment_dt: datetime) -> Optional[dict]:
+        """Находит событие в календаре по точному времени начала."""
+        service = cls._get_service()
+        if not service:
+            return None
+
+        # Google API требует очень точного формата времени
+        exact_time = appointment_dt.astimezone(pytz.utc).isoformat().replace('+00:00', 'Z')
+
+        try:
+            events_result = service.events().list(
+                calendarId=CALENDAR_ID,
+                timeMin=exact_time,
+                timeMax=(appointment_dt + timedelta(seconds=1)).astimezone(pytz.utc).isoformat().replace('+00:00', 'Z'),
+                maxResults=1,
+                singleEvents=True
+            ).execute()
+            events = events_result.get('items', [])
+            return events[0] if events else None
+        except Exception as e:
+            logger.error(f"Failed to find event in Google Calendar: {e}")
+            return None
+
+    @classmethod
+    async def delete_event(cls, event_id: str) -> bool:
+        """Удаляет событие из календаря по его ID."""
+        service = cls._get_service()
+        if not service:
+            return False
+
+        try:
+            service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
+            logger.info(f"Event with ID {event_id} successfully deleted from Google Calendar.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete event {event_id} from Google Calendar: {e}")
+            return False
+
+    @classmethod
     async def add_appointment(cls, client_name: str, service_title: str, appointment_time: datetime,
                               phone_number: str) -> Optional[str]:
         """

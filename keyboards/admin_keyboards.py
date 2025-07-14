@@ -17,3 +17,13 @@ def get_admin_appointment_actions_keyboard(app_id: str):
     builder.add(InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_today"))
     builder.adjust(2)
     return builder.as_markup()
+
+def get_admin_appointment_actions_keyboard(google_event_id: str):
+    builder = InlineKeyboardBuilder()
+    # Мы больше не меняем статус, а сразу удаляем
+    # builder.add(InlineKeyboardButton(text="✅ Завершить", ...))
+    # builder.add(InlineKeyboardButton(text="❌ Отменить", ...))
+    builder.add(InlineKeyboardButton(text="🗑 Удалить/Отменить запись", callback_data=f"admin_delete_{google_event_id}"))
+    builder.add(InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_today"))
+    builder.adjust(1)
+    return builder.as_markup()

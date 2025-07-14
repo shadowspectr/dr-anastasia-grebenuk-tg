@@ -92,9 +92,9 @@ async def client_request_phone(callback: types.CallbackQuery, state: FSMContext)
 
 @router.message(ClientStates.waiting_for_phone)
 async def client_process_booking_with_phone(message: types.Message, state: FSMContext, db: Database, bot: Bot):
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: ВОЗВРАЩАЕМ ЭТУ СТРОКУ ---
+    # Эта строка исправляет ошибку NameError
     phone_number = message.text
-    # ------------------------------------------------
+
     await message.answer("Минутку, финальная проверка и создание записи...")
     data = await state.get_data()
     user = message.from_user
