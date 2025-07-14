@@ -1,7 +1,10 @@
+# handlers/client_handlers.py
+
 import logging
 from aiogram import Bot, Router, types, F
 from aiogram.fsm.context import FSMContext
 from datetime import datetime
+import pytz
 
 from database.db_supabase import Database
 from database.models import Appointment
@@ -10,12 +13,9 @@ from keyboards.client_keyboards import *
 from utils.google_calendar import GoogleCalendar
 from utils.notifications import notify_admin_on_new_appointment
 
-import pytz
-
-TIMEZONE = pytz.timezone('Europe/Moscow')
-
 router = Router()
 logger = logging.getLogger(__name__)
+TIMEZONE = pytz.timezone('Europe/Moscow')
 
 
 @router.callback_query(F.data == "client_book")
@@ -92,21 +92,20 @@ async def client_request_phone(callback: types.CallbackQuery, state: FSMContext)
 
 @router.message(ClientStates.waiting_for_phone)
 async def client_process_booking_with_phone(message: types.Message, state: FSMContext, db: Database, bot: Bot):
-    # ...
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: ВОЗВРАЩАЕМ ЭТУ СТРОКУ ---
+    phone_number = message.text
+    # ------------------------------------------------
+    await message.answer("Минутку, финальная проверка и создание записи...")
     data = await state.get_data()
     user = message.from_user
 
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Создаем "наивный" объект, а затем локализуем его
     naive_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
     appointment_dt = TIMEZONE.localize(naive_dt)
 
-    # --- Усиленная проверка занятости ---
     logger.info(f"Final check for slot {appointment_dt}...")
     current_busy_slots = await GoogleCalendar.get_busy_slots(appointment_dt)
 
     appointment_hour = appointment_dt.time().hour
-    # Конвертируем время из календаря в наш пояс перед сравнением
     is_slot_taken = any(
         slot.astimezone(TIMEZONE).time().hour == appointment_hour
         for slot in current_busy_slots
