@@ -78,13 +78,14 @@ class GoogleCalendar:
     @classmethod
     async def get_busy_slots(cls, target_date: datetime) -> List[datetime]:
         """
-        Получает список начала всех занятых слотов на указанную дату.
+        Получает список НАЧАЛА всех занятых слотов на указанную дату.
+        Возвращает список объектов datetime.
         """
         service = cls._get_service()
         if not service:
             return []
 
-        start_of_day = datetime.combine(target_date.date(), time.min).isoformat() + 'Z'  # 'Z' означает UTC
+        start_of_day = datetime.combine(target_date.date(), time.min).isoformat() + 'Z'
         end_of_day = datetime.combine(target_date.date(), time.max).isoformat() + 'Z'
 
         try:

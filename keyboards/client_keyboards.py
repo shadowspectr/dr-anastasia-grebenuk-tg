@@ -52,14 +52,17 @@ def get_upcoming_dates_keyboard():
     return builder.as_markup()
 
 
-def get_time_slots_keyboard(target_date: datetime, busy_slots: List[dict]):
+def get_time_slots_keyboard(target_date: datetime, busy_slots: List[datetime]):
     """
     Генерирует клавиатуру со свободными слотами каждый час.
+    Принимает список объектов datetime.
     """
     builder = InlineKeyboardBuilder()
 
-    # Получаем только часы начала занятых слотов
-    busy_hours = {slot['start'].astimezone().time().hour for slot in busy_slots}
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Получаем часы начала занятых слотов, работая с объектами datetime
+    busy_hours = {slot.astimezone().time().hour for slot in busy_slots}
+    # -------------------------
 
     time_slots = []
     # Генерируем слоты с 9:00 до 19:00

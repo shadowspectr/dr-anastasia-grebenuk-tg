@@ -1,5 +1,3 @@
-# handlers/client_handlers.py
-
 import logging
 from aiogram import Bot, Router, types, F
 from aiogram.fsm.context import FSMContext
@@ -16,7 +14,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-# --- Логика до выбора услуги ---
 @router.callback_query(F.data == "client_book")
 async def client_start_booking(callback: types.CallbackQuery, state: FSMContext, db: Database):
     keyboard = await get_service_categories_keyboard(db)
@@ -33,9 +30,6 @@ async def client_pick_category(callback: types.CallbackQuery, state: FSMContext,
     await state.set_state(ClientStates.waiting_for_service)
 
 
-# --- ИЗМЕНЕННАЯ УПРОЩЕННАЯ ЛОГИКА ---
-
-# Шаг 3: Выбор услуги.
 @router.callback_query(ClientStates.waiting_for_service, F.data.startswith("service_"))
 async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, db: Database):
     service_id = callback.data.split("_")[1]
@@ -43,20 +37,15 @@ async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, 
     if not service:
         await callback.answer("Ошибка: не найдена услуга.", show_alert=True)
         return
-
     await state.update_data(
-        service_id=service.id,
-        service_title=service.title,
-        service_price=service.price
+        service_id=service.id, service_title=service.title, service_price=service.price
     )
-
     keyboard = get_upcoming_dates_keyboard()
     await callback.message.edit_text(f"Вы выбрали: {service.title}.\n\n🗓️ Теперь выберите удобную дату:",
                                      reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_date)
 
 
-# Возврат к выбору даты
 @router.callback_query(F.data == "back_to_date_choice")
 async def back_to_date_handler(callback: types.CallbackQuery, state: FSMContext):
     keyboard = get_upcoming_dates_keyboard()
@@ -64,23 +53,18 @@ async def back_to_date_handler(callback: types.CallbackQuery, state: FSMContext)
     await state.set_state(ClientStates.waiting_for_date)
 
 
-# Шаг 4: Выбор даты
 @router.callback_query(ClientStates.waiting_for_date, F.data.startswith("date_"))
 async def client_pick_date(callback: types.CallbackQuery, state: FSMContext):
     date_str = callback.data.split("_")[1]
     await state.update_data(date=date_str)
-
     target_date = datetime.fromisoformat(date_str)
-
     busy_slots = await GoogleCalendar.get_busy_slots(target_date)
     keyboard = get_time_slots_keyboard(target_date, busy_slots)
-
     await callback.message.edit_text(
         f"Выбрана дата: {target_date.strftime('%d.%m.%Y')}.\nТеперь выберите свободное время:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_time)
 
 
-# Шаг 5: Выбор времени (без изменений)
 @router.callback_query(ClientStates.waiting_for_time, F.data.startswith("time_"))
 async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     time_str = callback.data.split("_")[1]
@@ -95,7 +79,6 @@ async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(ClientStates.waiting_for_confirmation)
 
 
-# Шаг 6: Запрос телефона (без изменений)
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def client_request_phone(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -103,23 +86,19 @@ async def client_request_phone(callback: types.CallbackQuery, state: FSMContext)
     await state.set_state(ClientStates.waiting_for_phone)
 
 
-# Шаг 7: Финальное подтверждение с надежной проверкой занятости
 @router.message(ClientStates.waiting_for_phone)
 async def client_process_booking_with_phone(message: types.Message, state: FSMContext, db: Database, bot: Bot):
     phone_number = message.text
     await message.answer("Минутку, финальная проверка и создание записи...")
-
     data = await state.get_data()
     user = message.from_user
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
-    # --- Усиленная проверка занятости ---
     logger.info(f"Final check for slot {appointment_dt}...")
     current_busy_slots = await GoogleCalendar.get_busy_slots(appointment_dt)
-
     appointment_hour = appointment_dt.time().hour
     is_slot_taken = any(
-        slot['start'].astimezone().time().hour == appointment_hour
+        slot.astimezone().time().hour == appointment_hour
         for slot in current_busy_slots
     )
 
@@ -128,8 +107,6 @@ async def client_process_booking_with_phone(message: types.Message, state: FSMCo
         await message.answer("К сожалению, кто-то только что занял это время. 😟\nПожалуйста, начните запись заново.")
         await state.clear()
         return
-
-    # --- Конец проверки ---
 
     logger.info("Slot is free. Creating event...")
     google_event_id = await GoogleCalendar.add_appointment(
@@ -140,7 +117,6 @@ async def client_process_booking_with_phone(message: types.Message, state: FSMCo
     )
 
     if google_event_id:
-        # ... остальная логика сохранения в БД и отправки уведомления ...
         new_appointment = Appointment(client_name=user.full_name, client_telegram_id=user.id,
                                       service_id=data['service_id'], appointment_time=appointment_dt)
         db_appointment_id = await db.add_appointment(new_appointment)
@@ -153,11 +129,9 @@ async def client_process_booking_with_phone(message: types.Message, state: FSMCo
     else:
         await message.answer(
             "❌ Произошла ошибка при записи в календарь. Свободное время могло измениться. Попробуйте снова.")
-
     await state.clear()
 
 
-# Отмена
 @router.callback_query(F.data == "cancel_booking")
 async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
