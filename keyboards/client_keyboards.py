@@ -1,16 +1,13 @@
 # keyboards/client_keyboards.py
 
-from aiogram.types import InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db_supabase import Database
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, time
 from typing import List
 
-# Импорты для календаря
-from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
 
-
-# --- Клавиатуры для основного меню и услуг ---
+# --- Клавиатуры для основного меню и услуг (без изменений) ---
 
 def get_client_main_keyboard():
     builder = InlineKeyboardBuilder()
@@ -38,36 +35,59 @@ async def get_services_keyboard(db: Database, category_id: str):
     return builder.as_markup()
 
 
-# --- УЛЬТИМАТИВНО ИСПРАВЛЕННАЯ ФУНКЦИЯ КАЛЕНДАРЯ ---
+# --- НОВАЯ ЛОГИКА КЛАВИАТУР ДЛЯ ДАТЫ И ВРЕМЕНИ ---
 
-async def get_calendar_keyboard():
+def get_upcoming_dates_keyboard():
     """
-    Создает инлайн-календарь для выбора даты.
+    Создает клавиатуру с кнопками на ближайшие 7 дней (не считая сегодня).
     """
-    # Вызываем конструктор и метод start_calendar БЕЗ каких-либо аргументов.
-    return SimpleCalendar().start_calendar()
+    builder = InlineKeyboardBuilder()
+    today = datetime.now()
+    # Названия дней недели на русском
+    weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+    for i in range(1, 8):  # От 1 до 7, чтобы начать с завтрашнего дня
+        day = today + timedelta(days=i)
+        day_str = day.strftime('%d.%m')
+        weekday_str = weekdays[day.weekday()]
+
+        builder.add(InlineKeyboardButton(
+            text=f"{day_str} ({weekday_str})",
+            callback_data=f"date_{day.strftime('%Y-%m-%d')}"
+        ))
+
+    builder.adjust(3)  # По 3 кнопки в ряд
+    return builder.as_markup()
 
 
 def get_time_slots_keyboard(target_date: datetime, busy_slots: List[datetime]):
     """
-    Генерирует клавиатуру со свободными временными слотами.
+    Генерирует клавиатуру со свободными слотами с шагом в 2 часа.
+    Учитывает, что каждый прием длится 2 часа.
     """
     builder = InlineKeyboardBuilder()
-    busy_times = [slot.astimezone().time() for slot in busy_slots]
+
+    # --- Логика определения занятых интервалов ---
+    # Создаем множество всех часов, которые заняты.
+    # Если запись в 10:00, то заняты часы 10 и 11.
+    busy_hours = set()
+    for slot in busy_slots:
+        slot_time = slot.astimezone().time()
+        busy_hours.add(slot_time.hour)
+        busy_hours.add(slot_time.hour + 1)  # Следующий час тоже занят
 
     time_slots = []
-    for hour in range(9, 19):
-        for minute in [0, 30]:
-            current_slot_time = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
+    # Генерируем возможные слоты с 9:00 до 17:00 (чтобы последняя запись в 17:00 закончилась в 19:00)
+    for hour in range(9, 18, 2):  # Шаг 2 часа: 9, 11, 13, 15, 17
+        slot_time = time(hour, 0)
 
-            now = datetime.now()
-            # Пропускаем прошедшие даты и время
-            if target_date.date() < now.date() or \
-                    (target_date.date() == now.date() and current_slot_time <= now.time()):
-                continue
+        # Проверяем, что слот еще не прошел для сегодняшнего дня
+        if target_date.date() == datetime.now().date() and slot_time <= datetime.now().time():
+            continue
 
-            if current_slot_time not in busy_times:
-                time_slots.append(current_slot_time)
+        # Проверяем, что ни текущий час, ни следующий не заняты
+        if hour not in busy_hours and (hour + 1) not in busy_hours:
+            time_slots.append(slot_time)
 
     if not time_slots:
         builder.add(InlineKeyboardButton(text="❌ На эту дату нет свободного времени", callback_data="no_slots"))
@@ -76,8 +96,8 @@ def get_time_slots_keyboard(target_date: datetime, busy_slots: List[datetime]):
             builder.add(InlineKeyboardButton(text=time_slot.strftime("%H:%M"),
                                              callback_data=f"time_{time_slot.strftime('%H:%M')}"))
 
-    builder.add(InlineKeyboardButton(text="🔙 Назад к выбору даты", callback_data="back_to_calendar"))
-    builder.adjust(4)
+    builder.add(InlineKeyboardButton(text="🔙 Назад к выбору даты", callback_data="back_to_date_choice"))
+    builder.adjust(3)  # По 3 кнопки в ряд
     return builder.as_markup()
 
 
