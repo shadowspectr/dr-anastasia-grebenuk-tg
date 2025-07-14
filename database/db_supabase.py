@@ -6,8 +6,8 @@ from dataclasses import asdict
 from datetime import datetime, time, timedelta
 
 # Импортируем и AsyncClient, и APIResponse для отладки
-from supabase import AsyncClient, APIResponse, create_client
-
+from supabase import AsyncClient, create_client
+from postgrest import APIResponse # <-- Исправленный импорт
 from .models import Appointment, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
