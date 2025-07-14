@@ -11,3 +11,4 @@ class ClientStates(StatesGroup):
     waiting_for_date = State()
     waiting_for_time = State()
     waiting_for_confirmation = State()
+    waiting_for_phone = State()

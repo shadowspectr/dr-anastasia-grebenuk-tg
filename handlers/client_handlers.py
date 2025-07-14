@@ -60,12 +60,8 @@ async def client_pick_date(callback: types.CallbackQuery, state: FSMContext):
     date_str = callback.data.split("_")[1]
     await state.update_data(date=date_str)
     target_date = datetime.strptime(date_str, '%Y-%m-%d')
-
-    # Получаем занятые слоты из Google Calendar
     busy_slots = await GoogleCalendar.get_busy_slots(target_date)
-    # Генерируем клавиатуру времени на основе занятых слотов
     keyboard = get_time_slots_keyboard(target_date, busy_slots)
-
     await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
                                      reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_time)
@@ -86,12 +82,28 @@ async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(ClientStates.waiting_for_confirmation)
 
 
-# Шаг 6: Подтверждение (обновленная логика)
+# --- ИЗМЕНЕННАЯ ЛОГИКА ---
+
+# Шаг 6: Пользователь нажал "Подтвердить". Запрашиваем телефон.
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
-    await callback.answer("Минутку, создаю запись...")
+async def client_request_phone(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Отлично! Для завершения записи, пожалуйста, "
+        "введите ваш номер телефона для связи:"
+    )
+    # Переходим в новое состояние ожидания телефона
+    await state.set_state(ClientStates.waiting_for_phone)
+
+
+# Шаг 7: Пользователь ввел телефон. Создаем все записи.
+@router.message(ClientStates.waiting_for_phone)
+async def client_process_booking_with_phone(message: types.Message, state: FSMContext, db: Database, bot: Bot):
+    phone_number = message.text
+    # Можно добавить валидацию номера телефона, но пока оставим так
+    await message.answer("Минутку, создаю запись...")
+
     data = await state.get_data()
-    user = callback.from_user
+    user = message.from_user
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
     # 1. Создаем событие в Google Calendar
@@ -99,7 +111,8 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
     google_event_id = await GoogleCalendar.add_appointment(
         client_name=user.full_name,
         service_title=data['service_title'],
-        appointment_time=appointment_dt
+        appointment_time=appointment_dt,
+        phone_number=phone_number  # Передаем номер телефона
     )
 
     # 2. Если в календаре создалось, сохраняем в БД и отправляем уведомление
@@ -110,27 +123,25 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
             client_telegram_id=user.id,
             service_id=data['service_id'],
             appointment_time=appointment_dt
+            # Телефон в нашу БД не сохраняем
         )
         # Сохраняем в нашу БД Supabase
         db_appointment_id = await db.add_appointment(new_appointment)
 
         if db_appointment_id:
             logger.info(f"Appointment saved to DB with ID: {db_appointment_id}")
-            # 3. Отправляем уведомление админу
-            # Исправляем имя вызываемой функции
-            await notify_admin_on_new_appointment(bot, new_appointment, data['service_title'])
-            await callback.message.edit_text(
+            # 3. Отправляем уведомление админу с номером телефона
+            await notify_admin_on_new_appointment(bot, new_appointment, data['service_title'], phone_number)
+            await message.answer(
                 "✅ Вы успешно записаны!\nЗапись добавлена в календарь и нашу систему."
             )
         else:
-            # Случай, когда в календаре создалось, а в БД - нет.
             logger.error("Failed to save appointment to DB after creating it in Google Calendar.")
-            await callback.message.edit_text(
+            await message.answer(
                 "❌ Произошла ошибка при сохранении записи в нашу систему. Пожалуйста, свяжитесь с администратором.")
     else:
-        # Если даже в календаре не создалось
         logger.error("Failed to create event in Google Calendar.")
-        await callback.message.edit_text(
+        await message.answer(
             "❌ Произошла ошибка при записи в календарь. Свободное время могло измениться. Попробуйте снова.")
 
     await state.clear()

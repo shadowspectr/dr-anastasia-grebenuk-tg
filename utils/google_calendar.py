@@ -40,10 +40,11 @@ class GoogleCalendar:
         return cls._service
 
     @classmethod
-    async def add_appointment(cls, client_name: str, service_title: str, appointment_time: datetime,
+    async def add_appointment(cls, client_name: str, service_title: str, appointment_time: datetime, phone_number: str,
                               duration_minutes: int = 60) -> Optional[str]:
         """
         Добавляет новое событие (запись) в календарь.
+        Включает номер телефона в описание.
         Возвращает ID созданного события.
         """
         service = cls._get_service()
@@ -55,10 +56,11 @@ class GoogleCalendar:
 
         event = {
             'summary': f'{client_name} - {service_title}',
-            'description': f'Запись на услугу: {service_title}',
+            # Добавляем телефон в описание события
+            'description': f'Запись на услугу: {service_title}\n\nТелефон для связи: {phone_number}',
             'start': {
                 'dateTime': start_time,
-                'timeZone': 'Europe/Moscow',
+                'timeZone': 'Europe/Moscow',  # Важно указать ваш часовой пояс
             },
             'end': {
                 'dateTime': end_time,
