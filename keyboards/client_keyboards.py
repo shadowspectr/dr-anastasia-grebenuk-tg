@@ -38,16 +38,16 @@ async def get_services_keyboard(db: Database, category_id: str):
     return builder.as_markup()
 
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ КАЛЕНДАРЯ ---
+# --- ОКОНЧАТЕЛЬНО ИСПРАВЛЕННАЯ ФУНКЦИЯ КАЛЕНДАРЯ ---
 
 async def get_calendar_keyboard():
     """
     Создает инлайн-календарь для выбора даты.
     """
-    # В новой версии конструктор принимает только show_alerts
-    simple_calendar = SimpleCalendar(show_alerts=True)
+    # В этой версии конструктор SimpleCalendar вызывается БЕЗ АРГУМЕНТОВ.
+    simple_calendar = SimpleCalendar()
 
-    # Локаль передается в метод start_calendar
+    # Все настройки, такие как локаль, передаются в метод start_calendar.
     return simple_calendar.start_calendar(locale='ru_RU')
 
 
@@ -63,9 +63,8 @@ def get_time_slots_keyboard(target_date: datetime, busy_slots: List[datetime]):
         for minute in [0, 30]:
             current_slot_time = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").time()
 
-            # Проверяем, что дата не в прошлом
-            # И что время еще не прошло для сегодняшнего дня
             now = datetime.now()
+            # Пропускаем прошедшие даты и время
             if target_date.date() < now.date() or \
                     (target_date.date() == now.date() and current_slot_time <= now.time()):
                 continue
