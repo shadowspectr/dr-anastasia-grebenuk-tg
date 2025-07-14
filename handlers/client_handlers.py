@@ -10,7 +10,7 @@ from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
 from utils.google_calendar import GoogleCalendar
-from utils.notifications import notify_admin_on_new_appointment  # <-- Новый импорт
+from utils.notifications import notify_admin_on_new_booking  # <-- Новый импорт
 
 router = Router()
 logger = logging.getLogger(__name__)
