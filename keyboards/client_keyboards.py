@@ -38,17 +38,14 @@ async def get_services_keyboard(db: Database, category_id: str):
     return builder.as_markup()
 
 
-# --- ОКОНЧАТЕЛЬНО ИСПРАВЛЕННАЯ ФУНКЦИЯ КАЛЕНДАРЯ ---
+# --- УЛЬТИМАТИВНО ИСПРАВЛЕННАЯ ФУНКЦИЯ КАЛЕНДАРЯ ---
 
 async def get_calendar_keyboard():
     """
     Создает инлайн-календарь для выбора даты.
     """
-    # В этой версии конструктор SimpleCalendar вызывается БЕЗ АРГУМЕНТОВ.
-    simple_calendar = SimpleCalendar()
-
-    # Все настройки, такие как локаль, передаются в метод start_calendar.
-    return simple_calendar.start_calendar(locale='ru_RU')
+    # Вызываем конструктор и метод start_calendar БЕЗ каких-либо аргументов.
+    return SimpleCalendar().start_calendar()
 
 
 def get_time_slots_keyboard(target_date: datetime, busy_slots: List[datetime]):
