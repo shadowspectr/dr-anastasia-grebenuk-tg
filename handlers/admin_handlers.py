@@ -1,9 +1,11 @@
+# handlers/admin_handlers.py
+
 import logging
 from aiogram import Bot, Router, types, F
 from aiogram.fsm.context import FSMContext
 from config_reader import config
 from datetime import datetime
-import pytz
+import pytz  # <-- Добавляем импорт
 
 from database.db_supabase import Database
 from database.models import Appointment
@@ -13,8 +15,8 @@ from keyboards.client_keyboards import (
     get_service_categories_keyboard,
     get_services_keyboard,
     get_upcoming_dates_keyboard,
-    get_time_slots_keyboard,
-    get_confirmation_keyboard
+    get_time_slots_keyboard
+    # get_confirmation_keyboard нам не нужен, админ не подтверждает свою же запись
 )
 from utils.google_calendar import GoogleCalendar
 
@@ -35,26 +37,17 @@ async def admin_today_appointments(callback: types.CallbackQuery, db: Database):
     today = datetime.now(TIMEZONE)
 
     # Получаем события напрямую из Google Calendar
-    events = await GoogleCalendar.get_busy_slots(today)  # Используем get_busy_slots для простоты
+    events = await GoogleCalendar.get_events_with_details(today)  # Используем новый метод
 
-    # Для отображения деталей нам нужен метод, возвращающий больше инфо
-    # Пока что сделаем так, в идеале - нужен get_events_with_details
-    events_details = []
-    for event_time in sorted(events):
-        event = await GoogleCalendar.find_event_by_datetime(event_time)
-        if event:
-            events_details.append(event)
-
-    if not events_details:
+    if not events:
         await callback.message.edit_text("📅 На сегодня записей нет.", reply_markup=get_admin_main_keyboard())
         return
 
     text = f"📅 <b>Записи на сегодня ({today.strftime('%d.%m.%Y')}):</b>\n\n"
     builder = InlineKeyboardBuilder()
 
-    for event in events_details:
-        event_start_time = datetime.fromisoformat(event['start'].get('dateTime').replace('Z', '+00:00')).astimezone(
-            TIMEZONE)
+    for event in sorted(events, key=lambda x: x['start']):
+        event_start_time = event['start'].astimezone(TIMEZONE)
         summary = event.get('summary', 'Без названия')
         event_id = event.get('id')
 
@@ -88,6 +81,7 @@ async def admin_delete_appointment(callback: types.CallbackQuery, db: Database):
     if deleted_from_google:
         await db.delete_appointment_by_google_id(event_id)
         await callback.answer("Запись успешно удалена!", show_alert=True)
+        # Вызываем функцию напрямую, так как callback уже использован
         await admin_today_appointments(callback, db)
     else:
         await callback.answer("Не удалось удалить запись из Google Календаря.", show_alert=True)
@@ -117,15 +111,12 @@ async def admin_enter_phone(message: types.Message, state: FSMContext, db: Datab
     await state.set_state(AdminStates.waiting_for_service)
 
 
-# Этапы выбора услуги, даты и времени для админа.
-# Они почти идентичны клиентским, но используют AdminStates.
-
 @router.callback_query(AdminStates.waiting_for_service, F.data.startswith("category_"))
 async def admin_pick_category(callback: types.CallbackQuery, state: FSMContext, db: Database):
     category_id = callback.data.split("_")[1]
     keyboard = await get_services_keyboard(db, category_id)
     await callback.message.edit_text("Выберите услугу:", reply_markup=keyboard)
-    await state.set_state(AdminStates.waiting_for_service)  # Остаемся в том же состоянии, но меняем клавиатуру
+    # Состояние не меняем, просто обновляем клавиатуру
 
 
 @router.callback_query(AdminStates.waiting_for_service, F.data.startswith("service_"))
@@ -153,35 +144,25 @@ async def admin_pick_date(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_time)
 
 
-@router.message(AdminStates.waiting_for_time)  # Админ может ввести время вручную или нажать кнопку
 @router.callback_query(AdminStates.waiting_for_time, F.data.startswith("time_"))
-async def admin_pick_time(event: types.Message | types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
-    if isinstance(event, types.Message):
-        time_str = event.text
-    else:  # CallbackQuery
-        time_str = event.data.split("_")[1]
-        await event.answer()
+async def admin_pick_time(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
+    time_str = callback.data.split("_")[1]
+    await state.update_data(time=time_str)
 
     # --- Финальное подтверждение и создание записи ---
     data = await state.get_data()
 
-    try:
-        naive_dt = datetime.strptime(f"{data['date']} {time_str}", '%Y-%m-%d %H:%M')
-        appointment_dt = TIMEZONE.localize(naive_dt)
-    except ValueError:
-        await event.answer("Неверный формат времени. Введите в формате ЧЧ:ММ (например, 14:00).")
-        return
+    naive_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
+    appointment_dt = TIMEZONE.localize(naive_dt)
 
-    # Финальная проверка занятости
     current_busy_slots = await GoogleCalendar.get_busy_slots(appointment_dt)
     is_slot_taken = any(
         slot.astimezone(TIMEZONE).time().hour == appointment_dt.time().hour for slot in current_busy_slots)
 
     if is_slot_taken:
-        await bot.send_message(event.from_user.id, "Это время уже занято. Пожалуйста, выберите другое.")
+        await callback.message.answer("Это время уже занято. Пожалуйста, выберите другое.")
         return
 
-    # Создаем событие
     google_event_id = await GoogleCalendar.add_appointment(
         client_name=data['client_name'],
         service_title=data['service_title'],
@@ -198,14 +179,13 @@ async def admin_pick_time(event: types.Message | types.CallbackQuery, state: FSM
             google_event_id=google_event_id
         )
         await db.add_appointment(new_appointment)
-        await bot.send_message(event.from_user.id, "✅ Запись успешно создана!")
+        await callback.message.edit_text("✅ Запись успешно создана!")
     else:
-        await bot.send_message(event.from_user.id, "❌ Не удалось создать запись в календаре.")
+        await callback.message.edit_text("❌ Не удалось создать запись в календаре.")
 
     await state.clear()
 
 
-# Возврат в главное меню админа
 @router.callback_query(F.data == "admin_back_main")
 async def admin_back_to_main(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()

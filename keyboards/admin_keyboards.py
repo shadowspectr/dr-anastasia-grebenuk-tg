@@ -6,23 +6,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def get_admin_main_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📅 Записи на сегодня", callback_data="admin_today"))
+    # --- ДОБАВЛЯЕМ НОВУЮ КНОПКУ ---
+    builder.row(InlineKeyboardButton(text="✍️ Новая запись", callback_data="admin_new_appointment"))
     return builder.as_markup()
 
-# Принимаем строковый app_id (UUID)
-def get_admin_appointment_actions_keyboard(app_id: str):
-    builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="✅ Завершить", callback_data=f"admin_complete_{app_id}"))
-    builder.add(InlineKeyboardButton(text="❌ Отменить", callback_data=f"admin_cancel_{app_id}"))
-    builder.add(InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_delete_{app_id}"))
-    builder.add(InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_today"))
-    builder.adjust(2)
-    return builder.as_markup()
-
+# Принимаем строковый google_event_id
 def get_admin_appointment_actions_keyboard(google_event_id: str):
     builder = InlineKeyboardBuilder()
-    # Мы больше не меняем статус, а сразу удаляем
-    # builder.add(InlineKeyboardButton(text="✅ Завершить", ...))
-    # builder.add(InlineKeyboardButton(text="❌ Отменить", ...))
     builder.add(InlineKeyboardButton(text="🗑 Удалить/Отменить запись", callback_data=f"admin_delete_{google_event_id}"))
     builder.add(InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_today"))
     builder.adjust(1)

@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta, time
 import os
 from typing import List, Optional
-
+import pytz
 from google.oauth2 import service_account
 from googleapiclient.discovery import build, Resource
 
@@ -38,6 +38,9 @@ class GoogleCalendar:
                 logger.error(f"Failed to connect to Google Calendar API: {e}")
                 return None
         return cls._service
+
+
+
 
     @classmethod
     async def find_event_by_datetime(cls, appointment_dt: datetime) -> Optional[dict]:
@@ -78,6 +81,39 @@ class GoogleCalendar:
             logger.error(f"Failed to delete event {event_id} from Google Calendar: {e}")
             return False
 
+    @classmethod
+    async def get_events_with_details(cls, target_date: datetime) -> List[dict]:
+        """
+        Получает список событий на дату с полной информацией (id, summary, start).
+        """
+        service = cls._get_service()
+        if not service: return []
+
+        start_of_day = datetime.combine(target_date.date(), time.min).isoformat() + 'Z'
+        end_of_day = datetime.combine(target_date.date(), time.max).isoformat() + 'Z'
+
+        try:
+            events_result = service.events().list(
+                calendarId=CALENDAR_ID, timeMin=start_of_day, timeMax=end_of_day,
+                singleEvents=True, orderBy='startTime'
+            ).execute()
+
+            events = events_result.get('items', [])
+            detailed_events = []
+            for event in events:
+                start_str = event['start'].get('dateTime')
+                if start_str:
+                    detailed_events.append({
+                        'id': event.get('id'),
+                        'summary': event.get('summary'),
+                        'start': datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                    })
+            return detailed_events
+        except Exception as e:
+            logger.error(f"Failed to get detailed events from Google Calendar: {e}")
+            return []
+
+        
     @classmethod
     async def add_appointment(cls, client_name: str, service_title: str, appointment_time: datetime,
                               phone_number: str) -> Optional[str]:
@@ -147,3 +183,4 @@ class GoogleCalendar:
         except Exception as e:
             logger.error(f"Failed to get events from Google Calendar: {e}")
             return []
+
