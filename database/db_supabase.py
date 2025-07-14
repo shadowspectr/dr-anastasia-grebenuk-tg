@@ -1,16 +1,13 @@
-# database/db_supabase.py
-
 import logging
 from typing import List, Optional
-# НЕ импортируем dataclasses, datetime, time, timedelta пока они не нужны для категорий/услуг
-# from dataclasses import asdict
-# from datetime import datetime, time, timedelta
+from dataclasses import asdict
+from datetime import datetime, time, timedelta
 
-# Используем стандартный импорт create_client и AsyncClient
 from supabase import create_client, AsyncClient
+from postgrest import APIResponse
 
-# Импортируем модели, которые нужны для возврата данных
-from .models import ServiceCategory, Service  # Убедитесь, что эти модели правильно определены
+# Исправленный импорт: добавляем Appointment
+from .models import ServiceCategory, Service, Appointment # <-- Добавили Appointment
 
 logger = logging.getLogger(__name__)
 
