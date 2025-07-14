@@ -3,8 +3,12 @@
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db_supabase import Database
-from datetime import datetime, timedelta, time
+from datetime import datetime, time
 from typing import List
+import pytz  # <-- Новый импорт
+
+# Указываем наш целевой часовой пояс
+TIMEZONE = pytz.timezone('Europe/Moscow')
 
 
 # --- Клавиатуры для меню и услуг (без изменений) ---
@@ -34,11 +38,12 @@ async def get_services_keyboard(db: Database, category_id: str):
     return builder.as_markup()
 
 
-# --- НОВАЯ УПРОЩЕННАЯ ЛОГИКА ---
+# --- Новая логика клавиатур с часовыми поясами ---
 
 def get_upcoming_dates_keyboard():
     builder = InlineKeyboardBuilder()
-    today = datetime.now()
+    # Получаем текущее время в нашем часовом поясе
+    today = datetime.now(TIMEZONE)
     weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     for i in range(1, 8):
         day = today + timedelta(days=i)
@@ -53,24 +58,22 @@ def get_upcoming_dates_keyboard():
 
 
 def get_time_slots_keyboard(target_date: datetime, busy_slots: List[datetime]):
-    """
-    Генерирует клавиатуру со свободными слотами каждый час.
-    Принимает список объектов datetime.
-    """
     builder = InlineKeyboardBuilder()
 
     # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Получаем часы начала занятых слотов, работая с объектами datetime
-    busy_hours = {slot.astimezone().time().hour for slot in busy_slots}
-    # -------------------------
+    # Конвертируем UTC время из Google Calendar в наш часовой пояс
+    busy_hours = {slot.astimezone(TIMEZONE).time().hour for slot in busy_slots}
 
     time_slots = []
     # Генерируем слоты с 9:00 до 19:00
     for hour in range(9, 20):
         slot_time = time(hour, 0)
 
-        # Пропускаем прошедшее время для сегодня
-        if target_date.date() == datetime.now().date() and slot_time <= datetime.now().time():
+        # Создаем "осознающий" объект времени для сравнения
+        slot_datetime = TIMEZONE.localize(target_date.replace(hour=hour, minute=0))
+
+        # Пропускаем прошедшее время
+        if slot_datetime <= datetime.now(TIMEZONE):
             continue
 
         # Если час не занят, предлагаем его
