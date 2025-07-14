@@ -5,8 +5,8 @@ from typing import List, Optional
 from dataclasses import asdict
 from datetime import datetime, time, timedelta
 
-# Используем асинхронный клиент из официальной библиотеки
-from supabase import create_client, AClient as AsyncSupabaseConnection
+# Используем AClient напрямую для создания асинхронного клиента
+from supabase import AClient as AsyncSupabaseConnection
 from .models import Appointment, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
@@ -15,14 +15,9 @@ logger = logging.getLogger(__name__)
 class Database:
     def __init__(self, url: str, key: str):
         # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
-        # Создаем временный синхронный клиент, чтобы из него получить асинхронный
-        # Это самый надежный способ, который рекомендуют в некоторых случаях
-        sync_client = create_client(url, key)
-        self.async_client: AsyncSupabaseConnection = sync_client.auth.get_async_client()
+        # Создаем экземпляр асинхронного клиента НАПРЯМУЮ
+        self.async_client: AsyncSupabaseConnection = AsyncSupabaseConnection(url, key)
         # -------------------------
-
-        # Альтернативный, более прямой способ, если первый не сработает
-        # self.async_client: AsyncSupabaseConnection = AsyncSupabaseConnection(url, key)
 
     # --- Методы для Услуг и Категорий ---
 
@@ -99,7 +94,7 @@ class Database:
                 if row.get('appointment_time'):
                     row['appointment_time'] = datetime.fromisoformat(row['appointment_time'].replace('Z', '+00:00'))
                 else:
-                    continue  # Пропускаем записи с некорректным временем
+                    continue
 
                 app = Appointment(**row)
                 app.service_title = service_data['title'] if service_data else "Удаленная услуга"
