@@ -1,7 +1,6 @@
-# handlers/client_handlers.py
-
 import logging
-from aiogram import Router, types, F
+# Добавляем 'Bot' в эту строку импорта
+from aiogram import Bot, Router, types, F
 from aiogram.fsm.context import FSMContext
 from datetime import datetime
 
@@ -10,7 +9,8 @@ from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
 from utils.google_calendar import GoogleCalendar
-from utils.notifications import notify_admin_on_new_booking  # <-- Новый импорт
+# Исправляем имя импортируемой функции для соответствия
+from utils.notifications import notify_admin_on_new_appointment
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -117,13 +117,13 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         if db_appointment_id:
             logger.info(f"Appointment saved to DB with ID: {db_appointment_id}")
             # 3. Отправляем уведомление админу
+            # Исправляем имя вызываемой функции
             await notify_admin_on_new_appointment(bot, new_appointment, data['service_title'])
             await callback.message.edit_text(
                 "✅ Вы успешно записаны!\nЗапись добавлена в календарь и нашу систему."
             )
         else:
             # Случай, когда в календаре создалось, а в БД - нет.
-            # Здесь нужна логика компенсации (удалить из календаря), но пока просто сообщим об ошибке.
             logger.error("Failed to save appointment to DB after creating it in Google Calendar.")
             await callback.message.edit_text(
                 "❌ Произошла ошибка при сохранении записи в нашу систему. Пожалуйста, свяжитесь с администратором.")

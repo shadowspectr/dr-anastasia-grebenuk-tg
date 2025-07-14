@@ -8,7 +8,7 @@ from database.models import Appointment
 
 logger = logging.getLogger(__name__)
 
-async def notify_admin_on_new_booking(bot: Bot, appointment: Appointment, service_title: str, service_price: str):
+async def notify_admin_on_new_appointment(bot: Bot, appointment: Appointment, service_title: str):
     """
     Отправляет уведомление администратору о новой записи.
     """
@@ -22,8 +22,7 @@ async def notify_admin_on_new_booking(bot: Bot, appointment: Appointment, servic
     text = (
         f"🔔 <b>Новая запись!</b>\n\n"
         f"👤 <b>Клиент:</b> {appointment.client_name}\n"
-        f"✍️ <b>Услуга:</b> {service_title}\n"
-        f"💰 <b>Стоимость:</b> {service_price} ₽\n\n"
+        f"✍️ <b>Услуга:</b> {service_title}\n\n"
         f"🗓️ <b>Дата и время:</b> {appointment_time_str}\n\n"
         f"<i>Telegram ID клиента:</i> <code>{appointment.client_telegram_id}</code>"
     )
@@ -38,3 +37,5 @@ async def notify_admin_on_new_booking(bot: Bot, appointment: Appointment, servic
         logger.info(f"Уведомление о новой записи отправлено администратору {config.admin_id}")
     except TelegramAPIError as e:
         logger.error(f"Не удалось отправить уведомление администратору {config.admin_id}: {e}")
+    except Exception as e:
+        logger.error(f"Неизвестная ошибка при отправке уведомления администратору: {e}")
