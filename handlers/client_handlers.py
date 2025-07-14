@@ -1,20 +1,24 @@
+# handlers/client_handlers.py
+
 import logging
-# Добавляем 'Bot' в эту строку импорта
 from aiogram import Bot, Router, types, F
 from aiogram.fsm.context import FSMContext
-from datetime import datetime
+from datetime import datetime, date
 
 from database.db_supabase import Database
 from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
 from utils.google_calendar import GoogleCalendar
-# Исправляем имя импортируемой функции для соответствия
 from utils.notifications import notify_admin_on_new_appointment
+# Импорт для календаря
+from aiogram_calendar import SimpleCalendarCallback
 
 router = Router()
 logger = logging.getLogger(__name__)
 
+
+# --- Логика до выбора услуги остается без изменений ---
 
 # Старт флоу записи
 @router.callback_query(F.data == "client_book")
@@ -24,7 +28,7 @@ async def client_start_booking(callback: types.CallbackQuery, state: FSMContext,
     await state.set_state(ClientStates.waiting_for_category)
 
 
-# Шаг 2: Выбор категории
+# Выбор категории
 @router.callback_query(ClientStates.waiting_for_category, F.data.startswith("category_"))
 async def client_pick_category(callback: types.CallbackQuery, state: FSMContext, db: Database):
     category_id = callback.data.split("_")[1]
@@ -47,16 +51,20 @@ async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, 
 
     await state.update_data(service_id=service_id, service_title=service.title, service_price=service.price)
 
-    # Показываем календарь
+    # Добавляем await, чтобы получить результат из асинхронной функции
     keyboard = await get_calendar_keyboard()
-    await callback.message.edit_text(f"Вы выбрали: {service.title}.\n\n🗓️ Теперь выберите удобную дату:",
-                                     reply_markup=keyboard)
+
+    await callback.message.edit_text(
+        f"Вы выбрали: {service.title}.\n\n🗓️ Теперь выберите удобную дату:",
+        reply_markup=keyboard
+    )
     await state.set_state(ClientStates.waiting_for_date)
 
 
 # Новый хендлер для возврата к календарю
 @router.callback_query(F.data == "back_to_calendar")
 async def back_to_calendar_handler(callback: types.CallbackQuery, state: FSMContext):
+    # Добавляем await и здесь
     keyboard = await get_calendar_keyboard()
     await callback.message.edit_text("🗓️ Пожалуйста, выберите дату:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_date)
@@ -66,16 +74,21 @@ async def back_to_calendar_handler(callback: types.CallbackQuery, state: FSMCont
 @router.callback_query(ClientStates.waiting_for_date, SimpleCalendarCallback.filter())
 async def client_pick_date_from_calendar(callback: types.CallbackQuery, callback_data: SimpleCalendarCallback,
                                          state: FSMContext):
+    # В новой версии библиотеки нужно создавать экземпляр для process_selection
     selected, date_obj = await SimpleCalendar().process_selection(callback, callback_data)
 
-    if selected:
-        target_date = date_obj  # Это уже объект datetime.date
+    if selected and date_obj:
+        target_date = date_obj
         date_str = target_date.strftime('%Y-%m-%d')
+
+        # Проверка на прошедшую дату
+        if target_date.date() < datetime.now().date():
+            await callback.answer("Нельзя выбрать прошедшую дату!", show_alert=True)
+            return
+
         await state.update_data(date=date_str)
 
-        # Получаем занятые слоты из Google Calendar
         busy_slots = await GoogleCalendar.get_busy_slots(target_date)
-        # Генерируем клавиатуру времени
         keyboard = get_time_slots_keyboard(target_date, busy_slots)
 
         await callback.message.edit_text(
@@ -85,7 +98,7 @@ async def client_pick_date_from_calendar(callback: types.CallbackQuery, callback
         await state.set_state(ClientStates.waiting_for_time)
 
 
-# Шаг 5: Выбор времени (без изменений)
+# Шаг 5: Выбор времени
 @router.callback_query(ClientStates.waiting_for_time, F.data.startswith("time_"))
 async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     time_str = callback.data.split("_")[1]
@@ -100,7 +113,7 @@ async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(ClientStates.waiting_for_confirmation)
 
 
-# Шаг 6: Запрос телефона (без изменений)
+# Шаг 6: Запрос телефона
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def client_request_phone(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -118,8 +131,6 @@ async def client_process_booking_with_phone(message: types.Message, state: FSMCo
     user = message.from_user
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
-    # --- Усиленная проверка занятости ---
-    # Прямо перед записью еще раз проверяем, не занял ли кто-то этот слот
     logger.info(f"Final check for slot {appointment_dt}...")
     current_busy_slots = await GoogleCalendar.get_busy_slots(appointment_dt)
     is_slot_taken = any(slot.astimezone().time() == appointment_dt.time() for slot in current_busy_slots)
@@ -129,9 +140,7 @@ async def client_process_booking_with_phone(message: types.Message, state: FSMCo
         await message.answer("К сожалению, кто-то только что занял это время. 😟\nПожалуйста, начните запись заново.")
         await state.clear()
         return
-    # --- Конец проверки ---
 
-    # 1. Создаем событие в Google Calendar
     logger.info("Slot is free. Attempting to create event in Google Calendar...")
     google_event_id = await GoogleCalendar.add_appointment(
         client_name=user.full_name,
@@ -140,9 +149,7 @@ async def client_process_booking_with_phone(message: types.Message, state: FSMCo
         phone_number=phone_number
     )
 
-    # 2. Если в календаре создалось, сохраняем в БД и отправляем уведомление
     if google_event_id:
-        # ... остальная логика сохранения в БД и отправки уведомления без изменений ...
         logger.info(f"Google Calendar event created: {google_event_id}. Saving to DB...")
         new_appointment = Appointment(client_name=user.full_name, client_telegram_id=user.id,
                                       service_id=data['service_id'], appointment_time=appointment_dt)
@@ -163,7 +170,7 @@ async def client_process_booking_with_phone(message: types.Message, state: FSMCo
     await state.clear()
 
 
-# Отмена на любом этапе
+# Отмена
 @router.callback_query(F.data == "cancel_booking")
 async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
