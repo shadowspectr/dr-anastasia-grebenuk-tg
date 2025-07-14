@@ -40,27 +40,25 @@ class GoogleCalendar:
         return cls._service
 
     @classmethod
-    async def add_appointment(cls, client_name: str, service_title: str, appointment_time: datetime, phone_number: str,
-                              duration_minutes: int = 60) -> Optional[str]:
+    async def add_appointment(cls, client_name: str, service_title: str, appointment_time: datetime,
+                              phone_number: str) -> Optional[str]:
         """
-        Добавляет новое событие (запись) в календарь.
-        Включает номер телефона в описание.
-        Возвращает ID созданного события.
+        Добавляет новое событие (запись) в календарь с фиксированной длительностью 1 час.
         """
         service = cls._get_service()
         if not service:
             return None
 
         start_time = appointment_time.isoformat()
-        end_time = (appointment_time + timedelta(minutes=duration_minutes)).isoformat()
+        # Длительность всегда 60 минут
+        end_time = (appointment_time + timedelta(minutes=60)).isoformat()
 
         event = {
             'summary': f'{client_name} - {service_title}',
-            # Добавляем телефон в описание события
             'description': f'Запись на услугу: {service_title}\n\nТелефон для связи: {phone_number}',
             'start': {
                 'dateTime': start_time,
-                'timeZone': 'Europe/Moscow',  # Важно указать ваш часовой пояс
+                'timeZone': 'Europe/Moscow',
             },
             'end': {
                 'dateTime': end_time,
