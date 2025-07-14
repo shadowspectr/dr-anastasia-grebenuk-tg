@@ -3,15 +3,16 @@
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db_supabase import Database
-from datetime import datetime, time
+# Добавляем timedelta в эту строку
+from datetime import datetime, time, timedelta
 from typing import List
-import pytz  # <-- Новый импорт
+import pytz
 
 # Указываем наш целевой часовой пояс
 TIMEZONE = pytz.timezone('Europe/Moscow')
 
 
-# --- Клавиатуры для меню и услуг (без изменений) ---
+# --- Клавиатуры для основного меню и услуг (без изменений) ---
 def get_client_main_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📅 Записаться на услугу", callback_data="client_book"))
@@ -46,6 +47,7 @@ def get_upcoming_dates_keyboard():
     today = datetime.now(TIMEZONE)
     weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     for i in range(1, 8):
+        # Теперь timedelta будет работать
         day = today + timedelta(days=i)
         day_str = day.strftime('%d.%m')
         weekday_str = weekdays[day.weekday()]
@@ -60,8 +62,6 @@ def get_upcoming_dates_keyboard():
 def get_time_slots_keyboard(target_date: datetime, busy_slots: List[datetime]):
     builder = InlineKeyboardBuilder()
 
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Конвертируем UTC время из Google Calendar в наш часовой пояс
     busy_hours = {slot.astimezone(TIMEZONE).time().hour for slot in busy_slots}
 
     time_slots = []
