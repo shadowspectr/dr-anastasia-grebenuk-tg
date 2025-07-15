@@ -3,122 +3,152 @@
 import asyncio
 import logging
 import os
+import signal # Для корректного завершения работы
 
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.memory import MemoryStorage
-# from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-# from aiohttp import web
-from keep_alive import keep_alive
-
-# Удаляем импорт AsyncClient, он не нужен в main
-# from supabase import create_client, AsyncClient
-from supabase import create_client  # <-- Возвращаем простой импорт create_client
-
 from config_reader import config
 from database.db_supabase import Database
 from handlers import common_handlers, admin_handlers, client_handlers
 from utils.scheduler import setup_scheduler
+# Импортируем функцию для запуска бота в отдельном потоке
+from keep_alive import start_polling_in_thread
 
 # Настройка логирования
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Глобальный обработчик ошибок
 error_router = Router()
 
-
 @error_router.errors()
 async def error_handler(exception_update: types.ErrorEvent):
-    # ... код обработчика ошибок без изменений ...
-    pass  # Оставляем как есть, он не связан с DB инициализацией
-
-
-# Переменные для вебхука
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "default-super-secret")
-WEBHOOK_URL = f"{config.web_server_url}{config.webhook_path}"
-
+    """Обработчик ошибок для aiogram."""
+    exception = exception_update.exception
+    update = exception_update.update
+    logger.error(f"Update: {update}")
+    logger.error(f"Error: {exception}")
+    # Можно добавить более детальную обработку ошибок, например, отправку админу
+    # await exception_update.bot.send_message(config.admin_id, f"Произошла ошибка: {exception}")
 
 # --- Функции жизненного цикла приложения ---
-# Теперь эти функции не принимают async_supabase_client
-async def on_startup(dispatcher: Dispatcher, bot: Bot):
-    logger.info("Starting bot and setting webhook...")
-    await bot.set_webhook(url=WEBHOOK_URL, secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
-    logger.info(f"Webhook is set to {WEBHOOK_URL}")
+async def on_startup(dispatcher: Dispatcher, db: Database):
+    """Выполняется при старте бота."""
+    logger.info("Starting bot and registering handlers...")
 
-    # Регистрируем обработчик ошибок ПЕРВЫМ
-    dispatcher.include_router(error_router)
-
-    # Регистрируем остальные роутеры
+    # Регистрируем роутеры
+    dispatcher.include_router(error_router) # Обработчик ошибок должен быть первым
     dispatcher.include_router(common_handlers.router)
     dispatcher.include_router(admin_handlers.router)
     dispatcher.include_router(client_handlers.router)
 
-    # --- ОТКЛЮЧЕНО ДЛЯ ДИАГНОСТИКИ (снова) ---
-    # scheduler = setup_scheduler(bot, db) # db будет доступен через data
-    # scheduler.start()
-    # dispatcher["scheduler"] = scheduler
-    logger.info("Scheduler is DISABLED for debugging.")
+    # Инициализация и запуск планировщика, если база данных доступна
+    if db:
+        try:
+            scheduler = setup_scheduler(dispatcher.bot, db)
+            scheduler.start()
+            dispatcher["scheduler"] = scheduler
+            logger.info("Scheduler started.")
+        except Exception as e:
+            logger.exception(f"Failed to start scheduler: {e}")
+    else:
+        logger.warning("Database not initialized, scheduler will not be started.")
 
     logger.info("Bot startup complete.")
 
-
-# Функция on_shutdown без изменений, scheduler отключен
-async def on_shutdown(dispatcher: Dispatcher, bot: Bot):
-    logger.info("Shutting down bot and deleting webhook...")
-    await bot.delete_webhook()
-    logger.info("Webhook deleted.")
-    # ... scheduler shutdown code commented out ...
+async def on_shutdown(dispatcher: Dispatcher):
+    """Выполняется при выключении бота."""
+    logger.info("Shutting down bot...")
+    # Корректное завершение работы планировщика
+    if "scheduler" in dispatcher and dispatcher["scheduler"]:
+        try:
+            dispatcher["scheduler"].shutdown()
+            logger.info("Scheduler shut down.")
+        except Exception as e:
+            logger.exception(f"Error shutting down scheduler: {e}")
+    # Очистка FSM состояний (опционально)
+    await dispatcher.storage.close()
     logger.info("Bot shutdown complete.")
 
-
-# --- 6. Основная функция запуска ---
+# --- Основная функция запуска ---
 def main():
-    # --- ИНИЦИАЛИЗИРУЕМ DATABASE ЗДЕСЬ ---
-    db = Database(url=config.supabase_url, key=config.supabase_key)
-    # -----------------------------------
+    """Инициализирует бота и запускает его в режиме polling."""
+    logger.info("Initializing bot components...")
 
-    # Инициализация хранилища и диспетчера
+    # ИНИЦИАЛИЗИРУЕМ DATABASE
+    try:
+        db = Database(url=config.supabase_url, key=config.supabase_key)
+        # Проверка соединения с БД (опционально, но рекомендуется)
+        # Можно добавить вызов какого-нибудь метода для проверки
+        logger.info("Database connection established.")
+    except Exception as e:
+        logger.exception(f"Failed to initialize database: {e}")
+        db = None # Устанавливаем db в None, если инициализация не удалась
+
+    # Инициализация хранилища состояний и диспетчера
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
+    # Настройка свойств бота (например, парсинг HTML)
     default_properties = DefaultBotProperties(parse_mode="HTML")
     bot = Bot(token=config.bot_token, default=default_properties)
 
-    # Регистрация функций жизненного цикла
-    # on_startup и on_shutdown теперь не принимают async_supabase_client
-    dp.startup.register(on_startup)
+    # Регистрация обработчиков жизненного цикла
+    # Передаем экземпляр db в on_startup
+    dp.startup.register(on_startup, db=db)
     dp.shutdown.register(on_shutdown)
 
-    # Создаем веб-приложение aiohttp
-    app = web.Application()
+    logger.info("Starting bot in polling mode...")
 
-    # Создаем обработчик вебхуков для aiogram
-    # Передаем объект Database в data для хэндлеров
-    webhook_handler = SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-        secret_token=WEBHOOK_SECRET,
-        data={"db": db},  # <--- Передаем экземпляр Database
-    )
+    # Запускаем бота в режиме polling в отдельном потоке
+    # Функция start_polling_in_thread находится в keep_alive.py
+    # Она создаст поток, который запустит asyncio.run(dp.start_polling(bot))
+    start_polling_in_thread(dp, bot)
 
-    # Регистрируем обработчик по нашему секретному пути
-    webhook_handler.register(app, path=config.webhook_path)
+    logger.info("Bot polling started in a separate thread.")
+    logger.info("Main process is now running to keep the bot alive.")
 
-    # Добавляем "проверку здоровья" на главную страницу
-    async def health_check(request):
-        return web.Response(text="Bot is running!")
+    # Здесь можно добавить код для поддержания активности основного процесса,
+    # если это необходимо платформе (например, простой HTTP-сервер, если keep_alive.py
+    # теперь используется только для запуска бота, а не для HTTP-сервера).
+    # В данном случае, мы предполагаем, что start_polling_in_thread уже создал
+    # управляющий поток, и этот main процесс просто должен работать.
+    # Для простоты, мы можем просто ожидать сигналов завершения.
 
-    app.router.add_get("/", health_check)
+    # Создаем loop для обработки сигналов
+    loop = asyncio.get_event_loop()
 
-    # Запускаем веб-сервер aiohttp "из коробки"
-    setup_application(app, dp, bot=bot)
+    # Добавляем обработчик сигналов
+    def handle_signal(signum, frame):
+        logger.info(f"Signal {signum} received. Shutting down...")
+        # Отправляем сигнал завершения диспетчеру
+        # Это может потребовать более сложной логики, чтобы остановить потоки правильно
+        # Для простоты, можно просто завершить приложение
+        loop.stop() # Останавливает цикл событий, если он все еще работает
+        # Возможно, потребуется явный вызов dp.stop() или bot.session.close()
+        # Но обычно aiogram сам обрабатывает остановку при выходе из asyncio.run
 
-    # Определяем порт для Render
-    port = int(os.environ.get("PORT", 10000))
-    web.run_app(app, host="0.0.0.0", port=port)
+    # Регистрируем сигналы SIGINT (Ctrl+C) и SIGTERM (для системных остановок)
+    try:
+        loop.add_signal_handler(signal.SIGINT, handle_signal, signal.SIGINT, None)
+        loop.add_signal_handler(signal.SIGTERM, handle_signal, signal.SIGTERM, None)
+    except NotImplementedError:
+        # Для Windows, add_signal_handler может быть недоступен
+        logger.warning("Signal handlers for SIGINT/SIGTERM not available on this OS.")
+
+    # Оставляем основной поток работать, пока цикл событий не будет остановлен
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        logger.info("Main process interrupted.")
+    finally:
+        logger.info("Cleaning up main process...")
+        # Здесь можно добавить код очистки, если он нужен для основного процесса
+        # Например, закрытие сессии бота, если она не закрывается автоматически
+        # if bot:
+        #     asyncio.run(bot.session.close())
+        logger.info("Main process finished.")
 
 
 if __name__ == "__main__":
-    keep_alive()
     main()
