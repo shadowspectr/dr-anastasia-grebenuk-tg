@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import signal
+from typing import Dict, Any
 
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.client.default import DefaultBotProperties
@@ -12,6 +13,7 @@ from config_reader import config
 from database.db_supabase import Database
 from handlers import common_handlers, admin_handlers, client_handlers
 from utils.scheduler import setup_scheduler
+# Импортируем функцию для запуска бота в отдельном потоке
 from keep_alive import start_polling_in_thread # Предполагается, что эта функция существует в keep_alive.py
 
 # Настройка логирования
@@ -30,9 +32,13 @@ async def error_handler(exception_update: types.ErrorEvent):
     logger.error(f"Error: {exception}")
 
 # --- Функции жизненного цикла приложения ---
-async def on_startup(dispatcher: Dispatcher, db: Database): # db будет передано через data
+# Теперь db будет доступен через dp.bot.my_data или dp.workflow_data
+async def on_startup(dispatcher: Dispatcher):
     """Выполняется при старте бота."""
     logger.info("Starting bot and registering handlers...")
+
+    # Получаем доступ к данным, переданным при создании Dispatcher или Bot
+    db: Database = dispatcher.bot.my_data.get('db') # Получаем db из данных бота
 
     # Регистрируем роутеры
     dispatcher.include_router(error_router) # Обработчик ошибок должен быть первым
@@ -43,6 +49,7 @@ async def on_startup(dispatcher: Dispatcher, db: Database): # db будет пе
     # Инициализация и запуск планировщика, если база данных доступна
     if db:
         try:
+            # Передаем бота и db в setup_scheduler
             scheduler = setup_scheduler(dispatcher.bot, db)
             scheduler.start()
             dispatcher["scheduler"] = scheduler
@@ -87,68 +94,55 @@ def main():
     dp = Dispatcher(storage=storage)
     # Настройка свойств бота (например, парсинг HTML)
     default_properties = DefaultBotProperties(parse_mode="HTML")
-    bot = Bot(token=config.bot_token, default=default_properties)
 
-    # Регистрация обработчиков жизненного цикла.
-    # Мы передаем `db` как часть `data` при запуске диспетчера,
-    # но для `on_startup` и `on_shutdown` aiogram предоставляет специальный механизм:
-    # они получают доступ к данным из `Dispatcher` (например, `dispatcher.data`).
-    # Чтобы `on_startup` получил `db`, мы должны передать его в `Dispatcher`.
+    # Создаем бота и передаем в него данные (db)
+    bot = Bot(token=config.bot_token, default=default_properties, my_data={"db": db})
+
+    # Регистрация обработчиков жизненного цикла
+    # Теперь on_startup будет получать Dispatcher, из которого сможет достать бота и его данные
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
-
-    # Создаем словарь с данными для передачи в диспетчер
-    # Это доступно внутри обработчиков как dispatcher.data['db']
-    dispatcher_data = {"db": db}
 
     logger.info("Starting bot in polling mode...")
 
     # Запускаем бота в режиме polling в отдельном потоке
-    # Передаем экземпляр диспетчера и бота в функцию из keep_alive.py
-    start_polling_in_thread(dp, bot, dispatcher_data)
+    # Передаем экземпляр диспетчера, бота и данные для бота
+    start_polling_in_thread(dp, bot)
 
     logger.info("Bot polling started in a separate thread.")
     logger.info("Main process is now running to keep the bot alive.")
 
     # --- Поддержание активности основного процесса ---
-    # Этот блок нужен, чтобы основной процесс не завершился сразу после запуска потока бота.
-    # Он будет слушать сигналы завершения.
-
     loop = asyncio.get_event_loop()
 
     def handle_signal(signum, frame):
         logger.info(f"Signal {signum} received. Shutting down...")
-        # Здесь нужно корректно остановить все, включая поток бота.
-        # Простейший способ - вызвать stop() на цикле событий, который ожидает задача бота.
-        # Более надежный способ - передать событие остановки в поток бота.
-        # Для простоты, попробуем остановить цикл событий главного потока.
+        # Для корректной остановки потока бота, нужно инициировать остановку dp
+        # и подождать, пока цикл событий в потоке бота завершится.
+        # Это может потребовать передачи события или объекта остановки.
+        # Простейший вариант - остановить главный цикл, надеясь, что поток бота
+        # завершится сам или будет убит.
         try:
             loop.stop()
         except RuntimeError:
-            # Если цикл уже остановлен
             pass
 
-    # Регистрируем сигналы
     try:
         loop.add_signal_handler(signal.SIGINT, handle_signal, signal.SIGINT, None)
         loop.add_signal_handler(signal.SIGTERM, handle_signal, signal.SIGTERM, None)
     except NotImplementedError:
         logger.warning("Signal handlers for SIGINT/SIGTERM not available on this OS.")
 
-    # Запускаем основной цикл событий, который будет ждать сигналов
     try:
         loop.run_forever()
     except KeyboardInterrupt:
         logger.info("Main process interrupted.")
     finally:
         logger.info("Cleaning up main process...")
-        # Код здесь выполнится после loop.stop() или KeyboardInterrupt
-        # Нужно убедиться, что поток бота тоже корректно завершается
-        # Например, можно попытаться отправить сигнал остановки потоку бота
-        # или использовать asyncio.run() с таймаутом, если это возможно.
-        # Для простоты, будем надеяться, что поток бота завершится сам при закрытии цикла.
+        # Здесь также нужно убедиться, что поток бота корректно остановлен.
+        # Если цикл главный остановлен, а поток бота работает, он может остаться висеть.
+        # Возможно, потребуется менеджер потоков или другая синхронизация.
         logger.info("Main process finished.")
-
 
 if __name__ == "__main__":
     main()
