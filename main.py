@@ -8,8 +8,8 @@ from aiogram import Bot, Dispatcher, types, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
+# from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+# from aiohttp import web
 from keep_alive import keep_alive
 
 # Удаляем импорт AsyncClient, он не нужен в main
