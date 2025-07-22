@@ -95,13 +95,13 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
 
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
-    # Создаем объект Appointment, google_event_id пока None
+    # Создаем объект Appointment. google_event_id будет установлен позже, если успешно создастся.
     new_appointment = Appointment(
         client_name=user.full_name,
         client_telegram_id=user.id,
         service_id=data['service_id'],
         appointment_time=appointment_dt,
-        google_event_id=None # Пока что None
+        google_event_id=None  # Изначально None
     )
 
     # Добавляем запись в базу данных (получаем appointment_id)
@@ -113,18 +113,18 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
             "Вам придет напоминание за день до визита. Ждем вас!"
         )
 
-        # --- ОТПРАВКА УВЕДОМЛЕНИЯ АДМИНИСТРАТОРУ ---
-        new_appointment.id = appointment_id
+        # --- Уведомление администратору ---
+        new_appointment.id = appointment_id  # Обновляем ID в объекте для уведомления
         await notify_admin_on_new_booking(
             bot=bot,
             appointment=new_appointment,
             service_title=data['service_title'],
             service_price=data['service_price']
         )
-        # --------------------------------------------
+        # ------------------------------------
 
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
-        service_duration = 60 # Фиксированная длительность в 1 час
+        service_duration = 60  # Фиксированная длительность в 1 час
 
         # Вызываем функцию создания события и получаем его ID
         google_event_id = utils.google_calendar.create_google_calendar_event(
@@ -136,11 +136,14 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
 
         if google_event_id:
             logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для клиента {user.id}.")
+
             # Теперь сохраняем полученный google_event_id в базе данных
             if await db.update_appointment_google_id(appointment_id, google_event_id):
                 logger.info(f"Google Event ID '{google_event_id}' успешно сохранен для записи '{appointment_id}'.")
             else:
-                logger.warning(f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
+                # Если сохранение в БД не удалось, это тоже проблема
+                logger.warning(
+                    f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
         else:
             logger.warning(f"Не удалось создать событие для клиента {user.id} в Google Calendar.")
         # ------------------------------------

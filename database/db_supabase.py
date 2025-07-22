@@ -224,38 +224,13 @@ class Database:
             return False
 
         try:
-            # --- АЛЬТЕРНАТИВНОЕ ИСПРАВЛЕНИЕ ---
-            # Вместо формирования цепочки и затем await .execute(),
-            # попробуем await'ить сам объект запроса, если execute() не работает.
-            # Или же, если execute() возвращает объект, который нужно await'ить,
-            # возможно, версия библиотеки требует другой подход.
-
-            # Вариант 1: Если await .execute() не работает, возможно, await нужен на объекте запроса
-            # query_builder = self.client.table('appointments').update(
-            #     {'google_event_id': google_event_id}
-            # ).eq('id', appointment_id)
-            # response = await query_builder # Попробуйте await'ить сам объект запроса
-
-            # Вариант 2: Если execute() возвращает объект, который нужно await'ить,
-            # но сам execute() не асинхронный. Это маловероятно для асинхронного клиента.
-            # Скорее всего, проблема в первом варианте.
-
-            # Вернемся к более безопасному синтаксису, если await .execute() не работает.
-            # Попробуем вызвать execute() и сразу же await'ить его,
-            # но с пониманием, что execute() сам должен быть корутиной.
-
-            # Если ваша версия supabase-py требует await на execute():
+            # Формируем запрос на обновление.
+            # Важно: если self.client - асинхронный, то .execute() тоже должен быть awaitable.
             response = await self.client.table('appointments').update(
                 {'google_event_id': google_event_id}
             ).eq('id', appointment_id).execute()
 
-            # Если проблема остается, возможно, проблема не в execute(), а в том, как
-            # response обрабатывается или как клиент инициализирован.
-
-            # Проверим, что response является тем, что мы ожидаем.
-            # Для отладки, можно вывести тип response:
-            # logger.debug(f"Type of response: {type(response)}")
-
+            # Проверяем, что обновление прошло успешно. Supabase возвращает измененные строки.
             if response and response.data and len(response.data) > 0:
                 logger.info(f"Google Event ID '{google_event_id}' успешно обновлен для записи '{appointment_id}'.")
                 return True
