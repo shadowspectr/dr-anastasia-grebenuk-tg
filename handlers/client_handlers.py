@@ -7,7 +7,8 @@ from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
 from utils.notifications import notify_admin_on_new_booking
-from utils.google_calendar import create_google_calendar_event
+# Импортируем модуль google_calendar, чтобы получить доступ к функции create_google_calendar_event
+import utils.google_calendar
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -131,8 +132,8 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         # Устанавливаем фиксированную длительность записи в 1 час (60 минут)
         service_duration = 60
 
-        # Пытаемся создать событие в Google Calendar
-        google_event_created = create_google_calendar_event(
+        # Используем импортированный модуль для вызова функции
+        google_event_created = utils.google_calendar.create_google_calendar_event(
             appointment_time_str=f"{data['date']} {data['time']}",
             service_title=data['service_title'],
             client_name=user.full_name,
@@ -141,12 +142,6 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
 
         if google_event_created:
             logger.info(f"Событие для клиента {user.id} успешно добавлено в Google Calendar.")
-            # Если ты захочешь сохранять google_event_id в БД,
-            # тебе нужно будет изменить:
-            # 1. Модель Appointment (добавить google_event_id)
-            # 2. Таблицу appointments в Supabase (добавить столбец google_event_id)
-            # 3. Метод add_appointment в db_supabase.py (чтобы он принимал и сохранял google_event_id)
-            # 4. Метод get_appointment_by_id (чтобы он извлекал google_event_id)
         else:
             logger.warning(f"Не удалось добавить событие для клиента {user.id} в Google Calendar.")
         # ------------------------------------
