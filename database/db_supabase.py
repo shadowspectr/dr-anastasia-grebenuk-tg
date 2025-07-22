@@ -73,6 +73,46 @@ class Database:
             logger.error(f"Error getting service categories: {e}")
             return []
 
+    async def get_service_categories(self) -> List[ServiceCategory]:
+        try:
+            # --- ВАЖНО: Убедитесь, что execute() вызывается корректно ---
+            # Используйте asyncio.to_thread, если execute() синхронный
+            response = await asyncio.to_thread(
+                self.client.table('service_categories').select('*').order('title').execute)
+            if not response.data: return []
+            return [ServiceCategory(**row) for row in response.data]
+        except Exception as e:
+            logger.error(f"Error getting service categories: {e}")
+            return []
+
+    # --- ВОЗВРАЩАЕМ МЕТОД get_services_by_category ---
+    async def get_services_by_category(self, category_id: str) -> List[Service]:
+        """Получает список услуг по ID категории."""
+        try:
+            # --- ВАЖНО: Убедитесь, что execute() вызывается корректно ---
+            # Используйте asyncio.to_thread, если execute() синхронный
+            response = await asyncio.to_thread(
+                self.client.table('services').select('id, title, description, price, icon, category_id').eq(
+                    'category_id', category_id).order('title').execute)
+            if not response.data: return []
+            return [Service(**row) for row in response.data]
+        except Exception as e:
+            logger.error(f"Error getting services by category: {e}")
+            return []
+
+    async def get_service_by_id(self, service_id: str) -> Optional[Service]:
+        try:
+            # --- ВАЖНО: Убедитесь, что execute() вызывается корректно ---
+            response = await asyncio.to_thread(
+                self.client.table('services').select('id, title, description, price, icon, category_id').eq('id',
+                                                                                                            service_id).limit(
+                    1).execute)
+            if not response.data: return None
+            return Service(**response.data[0])
+        except Exception as e:
+            logger.error(f"Error getting service by id: {e}")
+            return None
+
     async def get_appointments_for_day(self, target_date: datetime, status: str = 'active') -> List[Appointment]:
         """Получает все записи на указанный день."""
         start_of_day = datetime.combine(target_date.date(), time.min).isoformat()
