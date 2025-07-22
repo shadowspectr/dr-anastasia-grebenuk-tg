@@ -1,12 +1,12 @@
 import logging
-from aiogram import Router, types, F, Bot # <-- Добавляем Bot в импорты
+from aiogram import Router, types, F, Bot
 from aiogram.fsm.context import FSMContext
 from datetime import datetime
 from database.db_supabase import Database
 from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
-from utils.notifications import notify_admin_on_new_booking # <-- НОВЫЙ ИМПОРN
+from utils.notifications import notify_admin_on_new_booking
 from utils.google_calendar import create_google_calendar_event
 
 router = Router()
@@ -61,6 +61,8 @@ async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db:
     date_str = callback.data.split("_")[1]
     await state.update_data(date=date_str)
     target_date = datetime.strptime(date_str, '%Y-%m-%d')
+    # Здесь get_time_slots_keyboard скорее всего использует db для проверки доступности,
+    # поэтому db передается. Если он не используется, можно убрать.
     keyboard = await get_time_slots_keyboard(target_date, db)
     await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
                                      reply_markup=keyboard)
@@ -90,15 +92,21 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
     data = await state.get_data()
     user = callback.from_user
 
+    # Парсим дату и время для создания объекта datetime
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
+    # Создаем объект Appointment.
+    # Если поле google_event_id существует в модели Appointment, но пока не сохраняется в БД,
+    # оно будет None.
     new_appointment = Appointment(
         client_name=user.full_name,
         client_telegram_id=user.id,
         service_id=data['service_id'],
-        appointment_time=appointment_dt
+        appointment_time=appointment_dt,
+        # google_event_id=None # Если поле google_event_id существует в модели Appointment
     )
 
+    # Добавляем запись в базу данных
     appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
@@ -109,6 +117,7 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         )
 
         # --- ОТПРАВКА УВЕДОМЛЕНИЯ АДМИНИСТРАТОРУ ---
+        # Присваиваем ID, полученный из БД, для полноты информации в уведомлении
         new_appointment.id = appointment_id
         await notify_admin_on_new_booking(
             bot=bot,
@@ -119,26 +128,34 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         # --------------------------------------------
 
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
-        # Получаем длительность услуги из БД, если это возможно, или используем значение по умолчанию
-        service_duration = await db.get_service_duration(data['service_id']) # Предполагаем, что такой метод есть в db
-        if not service_duration:
-             service_duration = 60 # Значение по умолчанию, если нет информации о длительности
+        # Устанавливаем фиксированную длительность записи в 1 час (60 минут)
+        service_duration = 60
 
-        if create_google_calendar_event(
+        # Пытаемся создать событие в Google Calendar
+        google_event_created = create_google_calendar_event(
             appointment_time_str=f"{data['date']} {data['time']}",
             service_title=data['service_title'],
             client_name=user.full_name,
             service_duration_minutes=service_duration
-        ):
+        )
+
+        if google_event_created:
             logger.info(f"Событие для клиента {user.id} успешно добавлено в Google Calendar.")
+            # Если ты захочешь сохранять google_event_id в БД,
+            # тебе нужно будет изменить:
+            # 1. Модель Appointment (добавить google_event_id)
+            # 2. Таблицу appointments в Supabase (добавить столбец google_event_id)
+            # 3. Метод add_appointment в db_supabase.py (чтобы он принимал и сохранял google_event_id)
+            # 4. Метод get_appointment_by_id (чтобы он извлекал google_event_id)
         else:
             logger.warning(f"Не удалось добавить событие для клиента {user.id} в Google Calendar.")
         # ------------------------------------
 
     else:
-        # Если произошла ошибка при записи
+        # Если произошла ошибка при записи в базу данных
         await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
 
+    # Очищаем состояние FSM после завершения или ошибки
     await state.clear()
 
 
@@ -146,5 +163,6 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
 @router.callback_query(F.data == "cancel_booking")
 async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    # Отправляем сообщение об отмене и клавиатуру главного меню
     # Эта клавиатура не делает запросов в БД, поэтому await не нужен
     await callback.message.edit_text("Запись отменена.", reply_markup=get_client_main_keyboard())
