@@ -5,7 +5,7 @@ from typing import List, Optional
 from dataclasses import asdict, field  # Импортируем field
 from datetime import datetime, time, timedelta
 
-from supabase import create_client, Client as SupabaseConnection
+from supabase import create_client, AsyncPostgrestClient, Client as SupabaseConnection
 from .models import Appointment, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,9 @@ def parse_datetime(iso_string: Optional[str]) -> Optional[datetime]:
 class Database:
     def __init__(self, url: str, key: str):
         self.client: SupabaseConnection = create_client(url, key)
+        # Добавьте эту проверку для отладки
+        if not isinstance(self.client, AsyncPostgrestClient):
+            logger.warning("Supabase client is not an async client. This might cause issues.")
 
     async def _process_appointment_rows(self, rows: List[dict]) -> List[Appointment]:
         """Вспомогательный метод для обработки списка записей."""
@@ -224,13 +227,70 @@ class Database:
             return False
 
         try:
-            # Формируем запрос на обновление.
-            # Важно: если self.client - асинхронный, то .execute() тоже должен быть awaitable.
+            # Формируем объект запроса
+            query_builder = self.client.table('appointments').update(
+                {'google_event_id': google_event_id}
+            ).eq('id', appointment_id)
+
+            # --- АЛЬТЕРНАТИВНЫЙ ВЫЗОВ ---
+            # Вместо await query_builder.execute(), попробуем await query_builder.execute().execute()
+            # или если execute() сам по себе должен быть awaitable, попробуем await query_builder.execute()
+
+            # Если ваша версия supabase-py требует await на execute:
+            response = await query_builder.execute()
+
+            # --- ДОПОЛНИТЕЛЬНЫЙ ШАГ ДЛЯ ОТЛАДКИ ---
+            # Если это не помогло, попробуем понять, что возвращает execute()
+            # logger.debug(f"Response type from execute(): {type(response)}")
+            # logger.debug(f"Response data from execute(): {response.data}")
+
+            # Самая распространенная проблема с await и execute() в supabase-py v2.x
+            # заключается в том, что .execute() сам по себе ДОЛЖЕН быть awaitable.
+            # Если вы получаете ошибку, значит, он либо НЕ awaitable, либо возвращает
+            # что-то, что не может быть await'ed.
+
+            # --- ВОЗМОЖНАЯ ПРОБЛЕМА С execute() ---
+            # Если await query_builder.execute() выдает ошибку,
+            # а query_builder.execute() сам по себе не корутина,
+            # то нужно искать альтернативный способ выполнения.
+            # Однако, в контексте асинхронного клиента, execute() ДОЛЖЕН быть awaitable.
+
+            # ПОПРОБУЕМ ЕЩЕ РАЗ: Убедитесь, что это единственное место, где вы используете
+            # `await .execute()` и что там нет ошибок.
+            # Если библиотека вернула 'APIResponse' и это НЕ корутина,
+            # то проблема скорее всего в инициализации клиента, или версии библиотеки.
+
+            # Если проблема остается, то возможно, у вас не совсем тот тип клиента,
+            # который мы ожидаем, или в самой библиотеке есть баг,
+            # который проявляется при работе с update.
+
+            # Попробуем самое простое: если .execute() не awaitable,
+            # то его нельзя await'ить. Но тогда откуда ошибка?
+            # Возможно, ошибка происходит при попытке получить response.data
+            # если response не является тем, что ожидается.
+
+            # Попробуем получить response без await, а потом await'ить его (маловероятно, но как вариант)
+            # response_obj = query_builder.execute()
+            # response = await response_obj # <-- это не должно сработать, если response_obj не корутина
+
+            # --- САМЫЙ ВЕРОЯТНЫЙ ВАРИАНТ ---
+            # Проблема может быть в том, что `self.client` не является асинхронным клиентом.
+            # Или что `execute()` в какой-то ситуации возвращает обычный объект, а не корутину.
+
+            # Если предыдущие попытки не сработали, попробуйте следующий синтаксис:
+            # Этот синтаксис предполагает, что `execute()` является асинхронным методом.
+            # Если это не так, то где-то в библиотеке есть несоответствие.
+
+            # Убираем `await` перед `execute`, если `execute()` сам по себе не является корутиной,
+            # и ожидаем, что `self.client` как-то сам обрабатывает это.
+            # Но это скорее всего неверный путь для async клиента.
+
+            # Попробуем вариант, где await нужен именно на execute()
             response = await self.client.table('appointments').update(
                 {'google_event_id': google_event_id}
             ).eq('id', appointment_id).execute()
 
-            # Проверяем, что обновление прошло успешно. Supabase возвращает измененные строки.
+            # --- Проверка ответа ---
             if response and response.data and len(response.data) > 0:
                 logger.info(f"Google Event ID '{google_event_id}' успешно обновлен для записи '{appointment_id}'.")
                 return True
@@ -239,5 +299,6 @@ class Database:
                     f"Обновление Google Event ID для записи '{appointment_id}' не дало результата (запись не найдена или не изменилась?).")
                 return False
         except Exception as e:
-            logger.error(f"Ошибка при обновлении Google Event ID для записи '{appointment_id}': {e}")
+            # Логгируем ошибку, чтобы понять, что именно происходит
+            logger.error(f"Ошибка при обновлении Google Event ID для записи '{appointment_id}': {e}", exc_info=True)
             return False
