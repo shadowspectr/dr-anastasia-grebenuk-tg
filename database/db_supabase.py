@@ -60,6 +60,31 @@ class Database:
             logger.error(f"Error getting service categories: {e}")
             return []
 
+    async def get_appointments_for_day(self, target_date: datetime, status: str = 'active') -> List[Appointment]:
+        """Получает все записи на указанный день."""
+        start_of_day = datetime.combine(target_date.date(), time.min).isoformat()
+        end_of_day = datetime.combine(target_date.date(), time.max).isoformat()
+
+        try:
+            # !!! ВАЖНО: Убедитесь, что google_event_id выбирается, если он нужен !!!
+            # Если его нет в SELECT, то app.google_event_id будет None.
+            # Для админ-панели он может быть полезен.
+            query = await self.client.table('appointments').select('*, services(title), google_event_id'). \
+                gte('appointment_time', start_of_day). \
+                lte('appointment_time', end_of_day). \
+                order('appointment_time')
+
+            if status:
+                query = query.eq('status', status)
+
+            response = await query.execute()  # <-- await execute()
+            if not response.data: return []
+
+            return await self._process_appointment_rows(response.data)
+        except Exception as e:
+            logger.error(f"Error getting appointments for day: {e}")
+            return []
+
     async def get_appointment_by_id(self, appointment_id: str) -> Optional[Appointment]:
         try:
             # !!! ВАЖНО: Добавляем google_event_id в SELECT !!!
