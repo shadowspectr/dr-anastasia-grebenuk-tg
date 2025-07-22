@@ -33,21 +33,16 @@ async def client_pick_category(callback: types.CallbackQuery, state: FSMContext,
     await state.set_state(ClientStates.waiting_for_service)
 
 
-# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ ВОЗВРАТА К ВЫБОРУ КАТЕГОРИИ ---
+# --- Обработчик возврата к выбору категорий ---
 @router.callback_query(ClientStates.waiting_for_service, F.data == "back_to_category_choice")
 async def back_to_category_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    # Удаляем данные о выбранной услуге
     await state.unset_data("service_id")
     await state.unset_data("service_title")
     await state.unset_data("service_price")
 
-    # Возвращаемся к выбору категории
     keyboard = await get_service_categories_keyboard(db)
     await callback.message.edit_text("Выберите категорию услуг:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_category)
-
-
-# --- КОНЕЦ НОВОГО ОБРАБОТЧИКА ---
 
 
 # Шаг 3: Выбор услуги
@@ -61,38 +56,10 @@ async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, 
         return
 
     await state.update_data(service_id=service_id, service_title=service.title, service_price=service.price)
-
-    # --- ИСПРАВЛЕНИЕ: Теперь get_date_keyboard - async функция, поэтому ее нужно await'ить ---
     keyboard = await get_date_keyboard(db)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
     await callback.message.edit_text(f"Вы выбрали: {service.title}.\nТеперь выберите удобный день:",
                                      reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_date)
-
-
-# --- ОБРАБОТЧИК ВОЗВРАТА К ВЫБОРУ ДАТЫ ---
-@router.callback_query(ClientStates.waiting_for_time, F.data == "back_to_date_choice")
-async def back_to_date_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    # Удаляем данные о выбранном времени
-    await state.unset_data("time")
-
-    # Получаем сохраненную дату
-    data = await state.get_data()
-    date_str = data.get('date')
-    if not date_str:
-        await callback.answer("Не удалось определить выбранную дату.", show_alert=True)
-        # Можно вернуть на предыдущий шаг или главную меню
-        return await state.finish()
-
-    target_date = datetime.strptime(date_str, '%Y-%m-%d')
-    keyboard = await get_time_slots_keyboard(target_date, db)  # Показываем слоты на тот же день
-    await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
-                                     reply_markup=keyboard)
-    await state.set_state(ClientStates.waiting_for_time)  # Остаемся в том же состоянии
-
-
-# --- КОНЕЦ ОБРАБОТЧИКА ВОЗВРАТА ---
 
 
 # Шаг 4: Выбор даты
@@ -102,59 +69,64 @@ async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db:
     await state.update_data(date=date_str)
     target_date = datetime.strptime(date_str, '%Y-%m-%d')
 
-    # --- ИЗМЕНЕНИЕ: Получаем слоты времени на выбранную дату ---
     keyboard = await get_time_slots_keyboard(target_date, db)
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
     await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
                                      reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_time)
+
+
+# --- Обработчик возврата к выбору дня ---
+@router.callback_query(ClientStates.waiting_for_time, F.data == "back_to_date_choice")
+async def back_to_date_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    await state.unset_data("time")  # Удаляем выбранное время
+
+    data = await state.get_data()
+    date_str = data.get('date')
+    if not date_str:
+        await callback.answer("Не удалось определить выбранную дату.", show_alert=True)
+        return await state.finish()  # Или вернуть на главный экран
+
+    target_date = datetime.strptime(date_str, '%Y-%m-%d')
+    keyboard = await get_time_slots_keyboard(target_date, db)  # Пересоздаем клавиатуру времени
+    await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
+                                     reply_markup=keyboard)
+    await state.set_state(ClientStates.waiting_for_time)  # Остаемся в том же состоянии
 
 
 # Шаг 5: Выбор времени
 @router.callback_query(ClientStates.waiting_for_time, F.data.startswith("time_"))
 async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     time_str = callback.data.split("_")[1]
+
+    # Сохраняем всю информацию перед переходом к запросу номера
     await state.update_data(time=time_str)
+    data = await state.get_data()  # Получаем все собранные данные
 
-    # Получаем все собранные данные для финального подтверждения
-    data = await state.get_data()
-
-    text = (f"<b>Подтвердите вашу запись:</b>\n\n"
-            f"<b>Услуга:</b> {data['service_title']}\n"
-            f"<b>Стоимость:</b> {data['service_price']} ₽\n"
-            f"<b>Дата:</b> {data['date']}\n"
-            f"<b>Время:</b> {time_str}")  # Используем time_str напрямую
-
-    await callback.message.edit_text(text, reply_markup=get_confirmation_keyboard())
-    await state.set_state(ClientStates.waiting_for_confirmation)
-
-
-# Шаг 6: Запрос номера телефона (новый шаг)
-@router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def client_request_phone_number(callback: types.CallbackQuery, state: FSMContext):
+    # Теперь сразу запрашиваем номер телефона
     await callback.message.edit_text(
         "Отлично! Теперь, пожалуйста, укажите ваш контактный номер телефона (например, +79991234567).")
     await state.set_state(ClientStates.waiting_for_phone)  # Переходим в состояние ожидания номера
 
 
-# Шаг 7: Получение номера телефона и финальное подтверждение
+# --- Шаг 6: Получение номера телефона И финальное подтверждение ---
+# Этот обработчик теперь отвечает за ПОЛУЧЕНИЕ номера и ПОКАЗ финального подтверждения.
 @router.message(ClientStates.waiting_for_phone)
-async def client_provide_phone(message: types.Message, state: FSMContext, db: Database, bot: Bot):
+async def client_provide_phone_and_confirm(message: types.Message, state: FSMContext, db: Database, bot: Bot):
     phone_number = message.text
 
-    # TODO: Добавить валидацию номера телефона, если нужно (например, с помощью регулярных выражений)
+    # TODO: Добавить валидацию номера телефона, если нужно
 
     await state.update_data(phone_number=phone_number)  # Сохраняем номер телефона
 
-    # Получаем ВСЕ данные для финального подтверждения
+    # Получаем ВСЕ собранные данные для финального подтверждения
     data = await state.get_data()
 
+    # Формируем финальный текст подтверждения
     text = (f"<b>Пожалуйста, проверьте детали вашей записи:</b>\n\n"
-            f"<b>Услуга:</b> {data['service_title']}\n"
-            f"<b>Стоимость:</b> {data['service_price']} ₽\n"
-            f"<b>Дата:</b> {data['date']}\n"
-            f"<b>Время:</b> {data['time']}\n"
+            f"<b>Услуга:</b> {data.get('service_title', 'Не указано')}\n"
+            f"<b>Стоимость:</b> {data.get('service_price', 'Не указано')} ₽\n"
+            f"<b>Дата:</b> {data.get('date', 'Не указано')}\n"
+            f"<b>Время:</b> {data.get('time', 'Не указано')}\n"
             f"<b>Ваш номер:</b> {phone_number}")  # Отображаем введенный номер
 
     # Отправляем НОВОЕ сообщение с финальным подтверждением.
@@ -172,19 +144,26 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
     data = await state.get_data()
     user = callback.from_user
 
+    # Проверяем, есть ли все необходимые данные
+    required_keys = ['service_title', 'service_price', 'date', 'time', 'phone_number']
+    if not all(key in data and data[key] for key in required_keys):
+        logger.error(f"Missing data for final confirmation: {data}. User: {user.id}")
+        await callback.answer("Произошла ошибка при сборе данных. Попробуйте начать запись заново.", show_alert=True)
+        await state.clear()
+        return
+
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
-    # Создаем объект Appointment, теперь с номером телефона
+    # Создаем объект Appointment
     new_appointment = Appointment(
         client_name=user.full_name,
         client_telegram_id=user.id,
         service_id=data['service_id'],
         appointment_time=appointment_dt,
-        client_phone=data.get('phone_number'),  # Получаем номер телефона из FSM состояния
+        client_phone=data.get('phone_number'),
         google_event_id=None  # Пока что None
     )
 
-    # Добавляем запись в базу данных
     appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
@@ -206,12 +185,11 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
         service_duration = 60
 
-        # Вызываем функцию создания события в Google Calendar, передавая номер телефона
         google_event_id = utils.google_calendar.create_google_calendar_event(
             appointment_time_str=f"{data['date']} {data['time']}",
             service_title=data['service_title'],
             client_name=user.full_name,
-            client_phone=data.get('phone_number'),  # Передаем номер телефона
+            client_phone=data.get('phone_number'),
             service_duration_minutes=service_duration
         )
 
