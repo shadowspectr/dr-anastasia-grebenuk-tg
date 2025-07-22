@@ -175,6 +175,9 @@ class Database:
             logger.error(f"Error updating status for appointment id {appointment_id}: {e}")
 
     async def delete_appointment(self, appointment_id: str) -> bool:
+        """Удаляет запись из БД и из Google Calendar."""
+
+        # --- Сначала получаем запись, чтобы получить google_event_id ---
         appointment = await self.get_appointment_by_id(appointment_id)
 
         if not appointment:
@@ -182,17 +185,29 @@ class Database:
             return False
 
         # --- СИНХРОНИЗАЦИЯ С GOOGLE CALENDAR ---
+        # Если у записи есть google_event_id, пытаемся удалить соответствующее событие
         if appointment.google_event_id:
+            # --- ВЫЗОВ ФУНКЦИИ УДАЛЕНИЯ ---
             if not utils.google_calendar.delete_google_calendar_event(appointment.google_event_id):
                 logger.warning(
                     f"Не удалось удалить событие Google Calendar '{appointment.google_event_id}' для записи '{appointment_id}'.")
+            else:
+                logger.info(
+                    f"Событие Google Calendar '{appointment.google_event_id}' для записи '{appointment_id}' успешно удалено.")
+        else:
+            logger.info(
+                f"Запись '{appointment_id}' не имеет Google Event ID, поэтому удаление из Google Calendar пропускается.")
 
         # --- УДАЛЕНИЕ ИЗ БД ---
         try:
-            # --- ИСПРАВЛЕНИЕ: Вызов синхронного execute через asyncio.to_thread ---
+            # Формируем запрос на удаление.
             query_builder = self.client.table('appointments').delete().eq('id', appointment_id)
-            response = await asyncio.to_thread(query_builder.execute)  # <-- Без await на execute, но await на to_thread
+
+            # --- ИСПРАВЛЕНИЕ: Вызов синхронного execute через asyncio.to_thread ---
+            # Предполагаем, что execute() синхронный, а вызывается в async методе.
+            response = await asyncio.to_thread(query_builder.execute)
             # ---
+
             if response and response.data and len(response.data) > 0:
                 logger.info(f"Запись '{appointment_id}' успешно удалена.")
                 return True
@@ -200,7 +215,7 @@ class Database:
                 logger.warning(f"Удаление записи '{appointment_id}' не дало результата (запись не найдена?).")
                 return False
         except Exception as e:
-            logger.error(f"Error deleting appointment id {appointment_id}: {e}")
+            logger.error(f"Error deleting appointment id {appointment_id}: {e}", exc_info=True)
             return False
 
     async def update_appointment_google_id(self, appointment_id: str, google_event_id: str) -> bool:

@@ -155,6 +155,7 @@ def update_google_calendar_event(event_id: str, appointment_time_str: str, servi
         logger.error(f'Произошла непредвиденная ошибка при обновлении события Google Calendar: {e}')
         return False
 
+
 def delete_google_calendar_event(event_id: str):
     """
     Удаляет событие из Google Calendar.
@@ -173,14 +174,26 @@ def delete_google_calendar_event(event_id: str):
         return False
 
     try:
+        # --- ВАЖНО: execute() здесь тоже может быть синхронным ---
+        # Если библиотека работает так, что execute() для delete тоже синхронный,
+        # то его тоже нужно будет обернуть в asyncio.to_thread.
+        # Однако, методы delete() и update() могут вести себя иначе.
+        # Попробуем сначала без asyncio.to_thread.
+
+        # --- Попробуем без asyncio.to_thread ---
         service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
         logger.info(f"Событие Google Calendar с ID '{event_id}' успешно удалено.")
         return True
+        # --- Если будет ошибка, то нужно будет попробовать: ---
+        # await asyncio.to_thread(service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute)
+        # Но в данном случае, delete() может быть методом, который сам возвращает результат,
+        # а execute() уже его выполняет.
 
     except HttpError as error:
         logger.error(f'Произошла ошибка Google API при удалении события: {error}')
         if error.resp.status == 404:
-            logger.error(f"Событие с ID '{event_id}' не найдено в календаре '{CALENDAR_ID}'. Возможно, оно было удалено вручную.")
+            logger.error(
+                f"Событие с ID '{event_id}' не найдено в календаре '{CALENDAR_ID}'. Возможно, оно было удалено вручную.")
         return False
     except Exception as e:
         logger.error(f'Произошла непредвиденная ошибка при удалении события Google Calendar: {e}')
