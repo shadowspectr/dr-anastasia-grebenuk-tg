@@ -2,6 +2,7 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db_supabase import Database
 from datetime import datetime, timedelta
+from aiogram import types
 
 
 def get_client_main_keyboard():
