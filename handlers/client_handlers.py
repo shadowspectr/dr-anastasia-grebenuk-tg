@@ -62,12 +62,13 @@ async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, 
 
     await state.update_data(service_id=service_id, service_title=service.title, service_price=service.price)
 
-    # --- ИЗМЕНЕНИЕ: Теперь вызываем get_date_keyboard ---
-    keyboard = get_date_keyboard(db)  # Получаем клавиатуру с датами
+    # --- ИСПРАВЛЕНИЕ: Теперь get_date_keyboard - async функция, поэтому ее нужно await'ить ---
+    keyboard = await get_date_keyboard(db)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     await callback.message.edit_text(f"Вы выбрали: {service.title}.\nТеперь выберите удобный день:",
                                      reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_date)
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
 # --- ОБРАБОТЧИК ВОЗВРАТА К ВЫБОРУ ДАТЫ ---
