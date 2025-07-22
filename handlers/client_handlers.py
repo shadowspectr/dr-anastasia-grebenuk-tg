@@ -6,7 +6,8 @@ from database.db_supabase import Database
 from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
-from utils.notifications import notify_admin_on_new_booking # <-- НОВЫЙ ИМПОРТ
+from utils.notifications import notify_admin_on_new_booking # <-- НОВЫЙ ИМПОРN
+from utils.google_calendar import create_google_calendar_event
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -108,9 +109,7 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         )
 
         # --- ОТПРАВКА УВЕДОМЛЕНИЯ АДМИНИСТРАТОРУ ---
-        # Добавляем ID к нашему объекту для полноты данных
         new_appointment.id = appointment_id
-        # Вызываем нашу новую функцию
         await notify_admin_on_new_booking(
             bot=bot,
             appointment=new_appointment,
@@ -118,6 +117,23 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
             service_price=data['service_price']
         )
         # --------------------------------------------
+
+        # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
+        # Получаем длительность услуги из БД, если это возможно, или используем значение по умолчанию
+        service_duration = await db.get_service_duration(data['service_id']) # Предполагаем, что такой метод есть в db
+        if not service_duration:
+             service_duration = 60 # Значение по умолчанию, если нет информации о длительности
+
+        if create_google_calendar_event(
+            appointment_time_str=f"{data['date']} {data['time']}",
+            service_title=data['service_title'],
+            client_name=user.full_name,
+            service_duration_minutes=service_duration
+        ):
+            logger.info(f"Событие для клиента {user.id} успешно добавлено в Google Calendar.")
+        else:
+            logger.warning(f"Не удалось добавить событие для клиента {user.id} в Google Calendar.")
+        # ------------------------------------
 
     else:
         # Если произошла ошибка при записи
