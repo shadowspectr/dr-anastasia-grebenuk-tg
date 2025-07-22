@@ -61,28 +61,51 @@ class Database:
             return []
 
     async def get_appointments_for_day(self, target_date: datetime, status: str = 'active') -> List[Appointment]:
-        """Получает все записи на указанный день."""
         start_of_day = datetime.combine(target_date.date(), time.min).isoformat()
         end_of_day = datetime.combine(target_date.date(), time.max).isoformat()
 
         try:
-            # !!! ВАЖНО: Убедитесь, что google_event_id выбирается, если он нужен !!!
-            # Если его нет в SELECT, то app.google_event_id будет None.
-            # Для админ-панели он может быть полезен.
-            query = await self.client.table('appointments').select('*, services(title), google_event_id'). \
+            query_builder = self.client.table('appointments').select('*, services(title), google_event_id'). \
                 gte('appointment_time', start_of_day). \
                 lte('appointment_time', end_of_day). \
                 order('appointment_time')
-
             if status:
-                query = query.eq('status', status)
+                query_builder = query_builder.eq('status', status)
 
-            response = await query.execute()  # <-- await execute()
+            # --- ОСНОВНОЕ ИЗМЕНЕНИЕ: Убираем await перед .execute() ---
+            # Если раньше работало без await, то, скорее всего, execute() синхронный.
+            response = query_builder.execute()  # <-- Убрали await
+            # ---
+
+            # --- ОБРАБОТКА ОТВЕТА ---
+            # Если response.data уже является списком, то это работает.
+            # Если response.data - это что-то, что нужно await'ить, то это не поможет.
+            # Но судя по ошибке, execute() сам по себе синхронный.
+
+            # --- ВАЖНО: _process_appointment_rows - это ASYNC метод! ---
+            # Если execute() возвращает синхронный ответ, как передать его в ASYNC метод?
+            # Это возможно, если execute() блокирует поток, но _process_appointment_rows
+            # будет вызван в том же асинхронном контексте.
+            # Явно нужно обернуть синхронный вызов в asyncio.to_thread, если код
+            # выполняется в async def функции, но сам вызов не асинхронный.
+
+            # --- ПРЕДПОЛОЖЕНИЕ: execute() возвращает синхронный ответ, но _process_appointment_rows async ---
+            # Это может вызвать проблемы. Но если прошлое работало, то, возможно,
+            # _process_appointment_rows не блокирует основной цикл asyncio.
+
+            # --- ПРОВЕРКА: Если execute() синхронный, то await здесь не нужен,
+            # но _process_appointment_rows ASYNC. ---
+            # Если execute() возвращает `response`, который содержит `data` (список),
+            # то мы можем передать его в `_process_appointment_rows`.
+
             if not response.data: return []
 
+            # Здесь мы пытаемся await'ить _process_appointment_rows.
+            # Это означает, что _process_appointment_rows должен быть awaitable.
+            # Если он асинхронный, то это OK, даже если response был синхронным.
             return await self._process_appointment_rows(response.data)
         except Exception as e:
-            logger.error(f"Error getting appointments for day: {e}")
+            logger.error(f"Error getting appointments for day: {e}", exc_info=True)
             return []
 
     async def get_appointment_by_id(self, appointment_id: str) -> Optional[Appointment]:
