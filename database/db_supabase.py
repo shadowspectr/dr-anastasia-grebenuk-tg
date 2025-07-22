@@ -224,10 +224,18 @@ class Database:
             return False
 
         try:
-            # Важно: Используй self.client, а не self.async_client
-            response = await self.client.table('appointments').update(
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            # Собираем запрос, но сам execute() должен быть корутиной, которую нужно await'ить.
+            # Если self.client является async-клиентом, то .execute() должен работать с await.
+            # Возможно, проблема в том, как supabase-py обрабатывает цепочку вызовов.
+            # Попробуем более явный синтаксис.
+
+            query_builder = self.client.table('appointments').update(
                 {'google_event_id': google_event_id}
-            ).eq('id', appointment_id).execute()
+            ).eq('id', appointment_id)
+
+            # Вызов .execute() должен быть awaitable, если client асинхронный
+            response = await query_builder.execute()
 
             # Проверяем, что обновление прошло успешно. Supabase возвращает измененные строки.
             if response and response.data and len(response.data) > 0:
