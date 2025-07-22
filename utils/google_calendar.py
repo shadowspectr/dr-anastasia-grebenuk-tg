@@ -100,3 +100,88 @@ def create_google_calendar_event(appointment_time_str: str, service_title: str, 
     except Exception as e:
         logger.error(f'Произошла непредвиденная ошибка при создании события Google Calendar: {e}')
         return None
+
+def update_google_calendar_event(event_id: str, appointment_time_str: str, service_title: str, client_name: str, client_phone: Optional[str] = None, service_duration_minutes: int = 60):
+    """
+    Обновляет существующее событие в Google Calendar.
+
+    Args:
+        event_id (str): ID события Google Calendar.
+        appointment_time_str (str): Новое время записи в формате "YYYY-MM-DD HH:MM".
+        service_title (str): Новое название услуги.
+        client_name (str): Новое имя клиента.
+        client_phone (Optional[str]): Новый номер телефона клиента.
+        service_duration_minutes (int): Новая продолжительность услуги (по умолчанию 60).
+
+    Returns:
+        bool: True, если событие успешно обновлено, False в противном случае.
+    """
+    service = get_google_calendar_service()
+    if not service:
+        return False
+    if not event_id:
+        logger.warning("Невозможно обновить событие: отсутствует event_id.")
+        return False
+
+    try:
+        appointment_dt = datetime.strptime(appointment_time_str, '%Y-%m-%d %H:%M')
+        end_time_dt = appointment_dt + timedelta(minutes=service_duration_minutes)
+
+        description_lines = [
+            f'Запись для клиента: {client_name}',
+            f'Услуга: {service_title}'
+        ]
+        if client_phone:
+            description_lines.append(f'Телефон: {client_phone}')
+
+        event = {
+            'summary': f'{service_title} - {client_name}',
+            'description': '\n'.join(description_lines),
+            'start': {'dateTime': appointment_dt.isoformat(), 'timeZone': 'Europe/Moscow'}, # <-- Укажите ваш часовой пояс!
+            'end': {'dateTime': end_time_dt.isoformat(), 'timeZone': 'Europe/Moscow'},   # <-- Укажите ваш часовой пояс!
+            'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 1440}]},
+        }
+
+        updated_event = service.events().update(calendarId=CALENDAR_ID, eventId=event_id, body=event).execute()
+        logger.info(f"Событие Google Calendar с ID '{event_id}' обновлено: {updated_event.get('htmlLink')}")
+        return True
+
+    except HttpError as error:
+        logger.error(f'Произошла ошибка Google API при обновлении события: {error}')
+        if error.resp.status == 404:
+            logger.error(f"Событие с ID '{event_id}' не найдено в календаре '{CALENDAR_ID}'. Возможно, оно было удалено вручную.")
+        return False
+    except Exception as e:
+        logger.error(f'Произошла непредвиденная ошибка при обновлении события Google Calendar: {e}')
+        return False
+
+def delete_google_calendar_event(event_id: str):
+    """
+    Удаляет событие из Google Calendar.
+
+    Args:
+        event_id (str): ID события Google Calendar.
+
+    Returns:
+        bool: True, если событие успешно удалено, False в противном случае.
+    """
+    service = get_google_calendar_service()
+    if not service:
+        return False
+    if not event_id:
+        logger.warning("Невозможно удалить событие: отсутствует event_id.")
+        return False
+
+    try:
+        service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
+        logger.info(f"Событие Google Calendar с ID '{event_id}' успешно удалено.")
+        return True
+
+    except HttpError as error:
+        logger.error(f'Произошла ошибка Google API при удалении события: {error}')
+        if error.resp.status == 404:
+            logger.error(f"Событие с ID '{event_id}' не найдено в календаре '{CALENDAR_ID}'. Возможно, оно было удалено вручную.")
+        return False
+    except Exception as e:
+        logger.error(f'Произошла непредвиденная ошибка при удалении события Google Calendar: {e}')
+        return False
