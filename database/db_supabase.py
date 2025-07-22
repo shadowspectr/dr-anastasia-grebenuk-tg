@@ -27,6 +27,7 @@ def parse_datetime(iso_string: Optional[str]) -> Optional[datetime]:
 
 class Database:
     def __init__(self, url: str, key: str):
+        self.client = create_client(url, key, async_client=True)
         self.client: SupabaseConnection = create_client(url, key)
 
 
@@ -230,25 +231,27 @@ class Database:
                 {'google_event_id': google_event_id}
             ).eq('id', appointment_id)
 
-            # --- ИСПРАВЛЕНИЕ: Попробуйте await-ить сам query_builder, если execute() вызывает проблемы ---
-            # Это немного нестандартно, но некоторые библиотеки работают так.
-            # Если .execute() сам по себе не является корутиной,
-            # то await query_builder.execute() может быть неверным.
-            # Попробуйте await query_builder.execute() как это было,
-            # но если ошибка остается, то возможно, await нужен был на чем-то другом.
+            # --- ИСПРАВЛЕНИЕ: Убираем await перед .execute() ---
+            # Если execute() НЕ является корутиной, то await перед ним вызовет ошибку.
+            # В асинхронном контексте, мы можем вызвать его напрямую.
+            # Supabase v2.x обычно сам обрабатывает асинхронность.
+            response = query_builder.execute()  # <-- Убрали await
 
-            # --- ВЕРНЕМСЯ К ПЕРВОНАЧАЛЬНОМУ ВАРИАНТУ, ЕСЛИ ДРУГОЕ НЕ ПОМОГЛО ---
-            # Самое надежное, если `.execute()` должен быть awaitable:
-            response = await query_builder.execute()
+            # --- ЕСЛИ execute() САМ ПО СЕБЕ НЕ АСИНХРОННЫЙ, то await будет на КОНТЕКСТЕ,
+            # где вызывается этот метод. Но здесь все в async def, так что это маловероятно.
 
-            # --- ДОПОЛНИТЕЛЬНАЯ ОТЛАДКА ---
-            # Если ошибка сохраняется, то давайте посмотрим, что возвращает execute()
-            # logger.debug(f"Type returned by execute(): {type(response)}")
-            # if hasattr(response, 'data'):
-            #     logger.debug(f"Data returned: {response.data}")
-            # else:
-            #     logger.debug(f"Response object does not have 'data' attribute.")
+            # --- ОТЛАДКА: Логируем тип ответа ---
+            logger.debug(f"Type returned by execute(): {type(response)}")
+            if hasattr(response, 'data'):
+                logger.debug(f"Data returned: {response.data}")
+            else:
+                logger.debug(f"Response object does not have 'data' attribute.")
             # --- КОНЕЦ ОТЛАДКИ ---
+
+            # Теперь, если response.data содержит результат, то все хорошо.
+            # Если response сам по себе не является awaitable, но должен был вернуть данные,
+            # это значит, что execute() выполнился синхронно.
+            # Но это противоречит работе с асинхронным клиентом.
 
             if response and response.data and len(response.data) > 0:
                 logger.info(f"Google Event ID '{google_event_id}' успешно обновлен для записи '{appointment_id}'.")
@@ -258,6 +261,5 @@ class Database:
                     f"Обновление Google Event ID для записи '{appointment_id}' не дало результата (запись не найдена или не изменилась?).")
                 return False
         except Exception as e:
-            # Используем exc_info=True для более полного лога ошибки
             logger.error(f"Ошибка при обновлении Google Event ID для записи '{appointment_id}': {e}", exc_info=True)
             return False
