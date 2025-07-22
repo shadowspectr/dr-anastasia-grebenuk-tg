@@ -113,6 +113,34 @@ class Database:
             logger.error(f"Error getting service by id: {e}")
             return None
 
+    async def add_appointment(self, appointment: Appointment) -> Optional[str]:
+        """Добавляет новую запись в базу данных, включая google_event_id."""
+        appointment_dict = asdict(appointment)
+        appointment_dict.pop('id', None)
+        appointment_dict.pop('created_at', None)
+        appointment_dict.pop('service_title', None)
+
+        appointment_dict['appointment_time'] = appointment.appointment_time.isoformat()
+
+        if appointment.google_event_id:
+            appointment_dict['google_event_id'] = appointment.google_event_id
+
+        try:
+            # --- ИСПРАВЛЕНИЕ: Вызов синхронного execute через asyncio.to_thread ---
+            # Используем asyncio.to_thread, так как execute() для insert, скорее всего, синхронный
+            query_builder = self.client.table('appointments').insert(appointment_dict)
+            response = await asyncio.to_thread(query_builder.execute)
+            # ---
+
+            if response and response.data and len(response.data) > 0:
+                return response.data[0].get('id')
+            else:
+                logger.error(f"Error adding appointment: Empty response from Supabase.")
+                return None
+        except Exception as e:
+            logger.error(f"Error adding appointment: {e}")
+            return None
+
     async def get_appointments_for_day(self, target_date: datetime, status: str = 'active') -> List[Appointment]:
         """Получает все записи на указанный день."""
         start_of_day = datetime.combine(target_date.date(), time.min).isoformat()
