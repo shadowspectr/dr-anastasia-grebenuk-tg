@@ -27,7 +27,7 @@ def parse_datetime(iso_string: Optional[str]) -> Optional[datetime]:
 
 class Database:
     def __init__(self, url: str, key: str):
-        self.client = create_client(url, key, async_client=True)
+        
         self.client: SupabaseConnection = create_client(url, key)
 
 
