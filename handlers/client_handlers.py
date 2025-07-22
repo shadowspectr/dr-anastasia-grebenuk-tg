@@ -87,24 +87,69 @@ async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(ClientStates.waiting_for_confirmation)
 
 
-# Шаг 6: Подтверждение
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
     user = callback.from_user
 
+    # Сохраняем выбранные данные
+    await state.update_data(
+        service_title=data['service_title'],
+        service_price=data['service_price'],
+        date=data['date'],
+        time=data['time']
+    )
+
+    # Отправляем клиенту сообщение с запросом номера телефона
+    await callback.message.edit_text(
+        "Отлично! Теперь, пожалуйста, укажите ваш контактный номер телефона (например, +79991234567).")
+    await state.set_state(ClientStates.waiting_for_phone)  # Переходим в состояние ожидания номера
+
+
+# Шаг 7: Получение номера телефона
+@router.message(ClientStates.waiting_for_phone)
+async def client_provide_phone(message: types.Message, state: FSMContext, db: Database, bot: Bot):
+    phone_number = message.text
+
+    # TODO: Добавить валидацию номера телефона, если нужно (например, с помощью регулярных выражений)
+
+    await state.update_data(phone_number=phone_number)  # Сохраняем номер телефона
+
+    # Получаем все данные для финального подтверждения
+    data = await state.get_data()
+
+    # --- ФИНАЛЬНОЕ ПОДТВЕРЖДЕНИЕ ---
+    text = (f"<b>Пожалуйста, проверьте детали вашей записи:</b>\n\n"
+            f"<b>Услуга:</b> {data['service_title']}\n"
+            f"<b>Стоимость:</b> {data['service_price']} ₽\n"
+            f"<b>Дата:</b> {data['date']}\n"
+            f"<b>Время:</b> {data['time']}\n"
+            f"<b>Ваш номер:</b> {phone_number}")
+
+    await message.answer(text,
+                         reply_markup=get_confirmation_keyboard())  # Отправляем новое сообщение, чтобы не редактировать предыдущее
+    await state.set_state(ClientStates.waiting_for_confirmation)
+
+
+# --- ПЕРЕОПРЕДЕЛЕНИЕ КОНФИРМАЦИИ, ТАК КАК ТЕПЕРЬ У НАС ЕСТЬ НОМЕР ---
+
+@router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
+async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
+    data = await state.get_data()
+    user = callback.from_user
+
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
-    # Создаем объект Appointment. google_event_id будет установлен позже, если успешно создастся.
+    # Создаем объект Appointment, теперь с номером телефона
     new_appointment = Appointment(
         client_name=user.full_name,
         client_telegram_id=user.id,
         service_id=data['service_id'],
         appointment_time=appointment_dt,
-        google_event_id=None  # Изначально None
+        client_phone=data.get('phone_number'),  # Получаем номер телефона из FSM состояния
+        google_event_id=None  # Пока что None
     )
 
-    # Добавляем запись в базу данных (получаем appointment_id)
     appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
@@ -114,7 +159,7 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         )
 
         # --- Уведомление администратору ---
-        new_appointment.id = appointment_id  # Обновляем ID в объекте для уведомления
+        new_appointment.id = appointment_id
         await notify_admin_on_new_booking(
             bot=bot,
             appointment=new_appointment,
@@ -126,22 +171,20 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
         service_duration = 60  # Фиксированная длительность в 1 час
 
-        # Вызываем функцию создания события и получаем его ID
+        # Вызываем функцию создания события в Google Calendar, включая номер телефона
         google_event_id = utils.google_calendar.create_google_calendar_event(
             appointment_time_str=f"{data['date']} {data['time']}",
             service_title=data['service_title'],
             client_name=user.full_name,
+            client_phone=data.get('phone_number'),  # Передаем номер телефона
             service_duration_minutes=service_duration
         )
 
         if google_event_id:
             logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для клиента {user.id}.")
-
-            # Теперь сохраняем полученный google_event_id в базе данных
             if await db.update_appointment_google_id(appointment_id, google_event_id):
                 logger.info(f"Google Event ID '{google_event_id}' успешно сохранен для записи '{appointment_id}'.")
             else:
-                # Если сохранение в БД не удалось, это тоже проблема
                 logger.warning(
                     f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
         else:
@@ -152,6 +195,13 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
 
     await state.clear()
+
+
+# Отмена на любом этапе
+@router.callback_query(F.data == "cancel_booking")
+async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Запись отменена.", reply_markup=get_client_main_keyboard())
 
 
 # Отмена на любом этапе
