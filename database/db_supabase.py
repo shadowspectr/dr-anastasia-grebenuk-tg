@@ -109,17 +109,37 @@ class Database:
             return []
 
     async def get_appointment_by_id(self, appointment_id: str) -> Optional[Appointment]:
+        """Получает запись по её ID."""
         try:
-            # !!! ВАЖНО: Добавляем google_event_id в SELECT !!!
-            response = await self.client.table('appointments').select('*, services(title), google_event_id').eq('id',
-                                                                                                                appointment_id).limit(
-                1).execute()  # <-- await execute()
+            # --- ВАЖНО: Убедитесь, что google_event_id выбирается, если он нужен !!! ---
+            query_builder = self.client.table('appointments').select('*, services(title), google_event_id').eq('id',
+                                                                                                               appointment_id).limit(
+                1)
+
+            # --- ИСПРАВЛЕНИЕ: Убираем await перед .execute() ---
+            # Если execute() синхронный, await перед ним вызовет ошибку.
+            # А если клиент асинхронный, то await ДОЛЖЕН быть.
+            # Но если раньше работало без await, попробуем без него.
+
+            # --- Снова пробуем вариант с await, как должно быть для async клиента ---
+            response = await query_builder.execute()  # <-- Оставляем await, как должно быть для async клиента.
+            # Если эта строка все еще вызывает ошибку, то проблема глубже.
+
+            # --- Отладка ---
+            # logger.debug(f"Type returned by execute() for get_appointment_by_id: {type(response)}")
+            # if hasattr(response, 'data'):
+            #     logger.debug(f"Data returned: {response.data}")
+            # else:
+            #     logger.debug(f"Response object does not have 'data' attribute.")
+            # ---
+
             if not response.data: return None
 
+            # _process_appointment_rows - это async метод, его нужно await'ить
             processed_app = await self._process_appointment_rows(response.data)
             return processed_app[0] if processed_app else None
         except Exception as e:
-            logger.error(f"Error getting appointment by id: {e}")
+            logger.error(f"Error getting appointment by id: {e}", exc_info=True)
             return None
 
     async def get_upcoming_appointments_to_remind(self) -> List[Appointment]:
