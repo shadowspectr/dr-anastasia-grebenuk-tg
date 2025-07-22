@@ -1,14 +1,11 @@
+# database/db_supabase.py (изменения)
+
 import logging
 from typing import List, Optional
-from dataclasses import asdict
+from dataclasses import asdict, field  # Импортируем field
 from datetime import datetime, time, timedelta
 
-# Используем только официальную библиотеку supabase
 from supabase import create_client, Client as SupabaseConnection
-# Убедитесь, что импорт правильный относительно структуры вашего проекта.
-# Если db_supabase.py находится в папке utils, а models.py в папке database,
-# то импорт может быть таким: from ..database.models import Appointment, Service, ServiceCategory
-# Но если они оба находятся в одной папке (например, database), то .models - верно.
 from .models import Appointment, Service, ServiceCategory
 
 logger = logging.getLogger(__name__)
@@ -19,14 +16,9 @@ def parse_datetime(iso_string: Optional[str]) -> Optional[datetime]:
     if not iso_string:
         return None
     try:
-        # Supabase может возвращать дату с 'Z' или с '+00:00'
         iso_string = iso_string.replace('Z', '+00:00')
-        # Отбрасываем информацию о таймзоне, если она есть, для простоты
-        # Это может быть рискованно, если нужны точные часовые пояса,
-        # но для данного случая, вероятно, достаточно.
         if '+' in iso_string:
             iso_string = iso_string.split('+')[0]
-        # Парсим строку
         return datetime.fromisoformat(iso_string)
     except (ValueError, TypeError):
         logger.warning(f"Could not parse datetime string: {iso_string}")
@@ -35,36 +27,35 @@ def parse_datetime(iso_string: Optional[str]) -> Optional[datetime]:
 
 class Database:
     def __init__(self, url: str, key: str):
-        # Важно: Используй async client для асинхронных операций
         self.client: SupabaseConnection = create_client(url, key)
 
     async def _process_appointment_rows(self, rows: List[dict]) -> List[Appointment]:
         """Вспомогательный метод для обработки списка записей."""
         appointments = []
         for row in rows:
-            # Извлекаем данные о сервисе, которые должны быть вложены в ответ от Supabase
-            # Предполагается, что при запросе используется select('*, services(title)')
             service_data = row.pop('services', None)
 
-            # Преобразуем строку времени в объект datetime
             row['appointment_time'] = parse_datetime(row.get('appointment_time'))
             if not row['appointment_time']:
                 logger.warning(f"Skipping appointment due to invalid time: {row.get('id')}")
-                continue  # Пропускаем запись, если дата некорректна
+                continue
 
             row['created_at'] = parse_datetime(row.get('created_at'))
 
-            # Создаем объект Appointment
+            # !!! ДОБАВИЛИ ОБРАБОТКУ google_event_id !!!
+            # Если поле google_event_id приходит из Supabase, оно будет добавлено в row.
+            # Поле google_event_id уже есть в модели Appointment.
+            # Если оно отсутствует в row, оно будет None по умолчанию.
+
             app = Appointment(**row)
-            # Устанавливаем service_title из вложенных данных, если они доступны
             app.service_title = service_data[
                 'title'] if service_data and 'title' in service_data else "Удаленная услуга"
             appointments.append(app)
         return appointments
 
     # --- Методы для Сервисов (Services) ---
+    # Оставлены без изменений
     async def get_service_categories(self) -> List[ServiceCategory]:
-        """Получает список категорий услуг."""
         try:
             response = self.client.table('service_categories').select('*').order('title').execute()
             if not response.data: return []
@@ -74,12 +65,7 @@ class Database:
             return []
 
     async def get_services_by_category(self, category_id: str) -> List[Service]:
-        """Получает список услуг по ID категории."""
         try:
-            # Важно: Если в модели Service есть duration_minutes, но мы ее больше не используем,
-            # можно убрать duration_minutes из SELECT, если он не нужен в объекте Service.
-            # Однако, для совместимости с моделью, оставим его, если он там есть.
-            # Предполагаем, что в таблице 'services' есть все поля, кроме duration_minutes.
             response = self.client.table('services').select('id, title, description, price, icon, category_id').eq(
                 'category_id', category_id).order('title').execute()
             if not response.data: return []
@@ -89,9 +75,7 @@ class Database:
             return []
 
     async def get_service_by_id(self, service_id: str) -> Optional[Service]:
-        """Получает услугу по её ID."""
         try:
-            # Аналогично, убираем duration_minutes, если он не нужен в объекте Service
             response = self.client.table('services').select('id, title, description, price, icon, category_id').eq('id',
                                                                                                                    service_id).limit(
                 1).execute()
@@ -102,16 +86,14 @@ class Database:
             return None
 
     # --- Методы для Записей (Appointments) ---
+    # Оставлены без изменений, кроме обработки google_event_id в _process_appointment_rows
 
     async def get_upcoming_appointments_to_remind(self) -> List[Appointment]:
-        """Получает записи на завтра, которые еще не были отмечены как напомненные."""
         tomorrow = datetime.now() + timedelta(days=1)
         tomorrow_start = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         tomorrow_end = tomorrow.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
 
         try:
-            # Используем select('*, services(title)') для получения названия услуги,
-            # которое нужно для уведомлений.
             query = self.client.table('appointments').select('*, services(title)') \
                 .gte('appointment_time', tomorrow_start) \
                 .lte('appointment_time', tomorrow_end) \
@@ -127,35 +109,30 @@ class Database:
             return []
 
     async def mark_as_reminded(self, appointment_id: str):
-        """Отмечает запись как напомненную."""
         try:
-            # Важно: Используй self.client, а не self.async_client, если create_client возвращает async client
             await self.client.table('appointments').update({'reminded': True}).eq('id', appointment_id).execute()
         except Exception as e:
             logger.error(f"Error marking appointment as reminded: {e}")
 
     async def add_appointment(self, appointment: Appointment) -> Optional[str]:
-        """Добавляет новую запись в базу данных."""
+        """Добавляет новую запись в базу данных, включая google_event_id."""
         appointment_dict = asdict(appointment)
-        # Удаляем поля, которые не должны быть вставлены напрямую или имеют дефолтные значения
         appointment_dict.pop('id', None)
         appointment_dict.pop('created_at', None)
         appointment_dict.pop('service_title', None)
-        # appointment_dict.pop('google_event_id', None) # Если поле google_event_id добавлено в модель, но не в БД
 
-        # Убедись, что appointment_time в нужном формате ISO
+        # Преобразуем appointment_time в ISO формат
         appointment_dict['appointment_time'] = appointment.appointment_time.isoformat()
 
-        # Если ты планируешь сохранять google_event_id в базе данных,
-        # и это поле есть в твоей таблице appointments в Supabase,
-        # то раскомментируй следующие строки:
-        # if appointment.google_event_id:
-        #     appointment_dict['google_event_id'] = appointment.google_event_id
+        # !!! ДОБАВИЛИ СОХРАНЕНИЕ google_event_id !!!
+        # Если google_event_id не None, добавляем его в словарь для вставки.
+        # Это сработает, если поле google_event_id существует в таблице 'appointments' в Supabase.
+        if appointment.google_event_id:
+            appointment_dict['google_event_id'] = appointment.google_event_id
 
         try:
             response = self.client.table('appointments').insert(appointment_dict).execute()
             if response and response.data and len(response.data) > 0:
-                # Supabase обычно возвращает ID в поле 'id'
                 return response.data[0].get('id')
             else:
                 logger.error(f"Error adding appointment: Empty response from Supabase.")
@@ -165,13 +142,14 @@ class Database:
             return None
 
     async def get_appointments_for_day(self, target_date: datetime, status: str = 'active') -> List[Appointment]:
-        """Получает все записи на указанный день."""
         start_of_day = datetime.combine(target_date.date(), time.min).isoformat()
         end_of_day = datetime.combine(target_date.date(), time.max).isoformat()
 
         try:
-            # Используем select('*, services(title)') для получения названия услуги,
-            # которое может быть полезно для обработки.
+            # Здесь нужно убедиться, что Supabase возвращает google_event_id, если он есть.
+            # Если вы хотите явно получать google_event_id, добавьте его в SELECT.
+            # Например: select('*, services(title), google_event_id')
+            # Если оно есть в _process_appointment_rows, то оно подхватится.
             query = self.client.table('appointments').select('*, services(title)').gte('appointment_time',
                                                                                        start_of_day).lte(
                 'appointment_time', end_of_day).order('appointment_time')
@@ -181,36 +159,31 @@ class Database:
             response = query.execute()
             if not response.data: return []
 
-            # Используем вспомогательный метод для обработки
             return await self._process_appointment_rows(response.data)
         except Exception as e:
             logger.error(f"Error getting appointments for day: {e}")
             return []
 
     async def get_appointment_by_id(self, appointment_id: str) -> Optional[Appointment]:
-        """Получает запись по её ID."""
         try:
-            # Используем select('*, services(title)') для получения названия услуги
+            # Аналогично, убедитесь, что google_event_id выбирается, если он нужен.
             response = self.client.table('appointments').select('*, services(title)').eq('id', appointment_id).limit(
                 1).execute()
             if not response.data: return None
 
-            # Используем вспомогательный метод (он вернет список из одного элемента)
             processed_app = await self._process_appointment_rows(response.data)
             return processed_app[0] if processed_app else None
         except Exception as e:
             logger.error(f"Error getting appointment by id: {e}")
             return None
 
-    # Метод для планировщика, аналогичен get_upcoming_appointments_to_remind
+    # Оставшиеся методы без изменений, но проверяйте SELECT запросы, если google_event_id нужно получать
     async def get_upcoming_appointments_to_remind(self) -> List[Appointment]:
-        """Получает записи на завтра, которые еще не были отмечены как напомненные."""
         tomorrow = datetime.now() + timedelta(days=1)
         tomorrow_start = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         tomorrow_end = tomorrow.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
 
         try:
-            # Используем select('*, services(title)') для получения названия услуги
             query = self.client.table('appointments').select('*, services(title)').gte('appointment_time',
                                                                                        tomorrow_start).lte(
                 'appointment_time', tomorrow_end).eq('status', 'active').eq('reminded', False)
@@ -221,18 +194,49 @@ class Database:
             logger.error(f"Error getting upcoming appointments: {e}")
             return []
 
+    async def mark_as_reminded(self, appointment_id: str):
+        try:
+            await self.client.table('appointments').update({'reminded': True}).eq('id', appointment_id).execute()
+        except Exception as e:
+            logger.error(f"Error marking appointment as reminded: {e}")
+
     async def update_appointment_status(self, appointment_id: str, status: str):
-        """Обновляет статус записи."""
         try:
             await self.client.table('appointments').update({'status': status}).eq('id', appointment_id).execute()
         except Exception as e:
             logger.error(f"Error updating status for id {appointment_id}: {e}")
 
     async def delete_appointment(self, appointment_id: str) -> bool:
-        """Удаляет запись по её ID."""
         try:
             response = await self.client.table('appointments').delete().eq('id', appointment_id).execute()
             return len(response.data) > 0
         except Exception as e:
             logger.error(f"Error deleting appointment id {appointment_id}: {e}")
+            return False
+
+    async def update_appointment_google_id(self, appointment_id: str, google_event_id: str) -> bool:
+        """
+        Обновляет запись в базе данных, добавляя google_event_id.
+        Возвращает True при успехе, False при ошибке.
+        """
+        if not appointment_id or not google_event_id:
+            logger.warning("Невозможно обновить Google Event ID: отсутствуют ID записи или события.")
+            return False
+
+        try:
+            # Важно: Используй self.client, а не self.async_client
+            response = await self.client.table('appointments').update(
+                {'google_event_id': google_event_id}
+            ).eq('id', appointment_id).execute()
+
+            # Проверяем, что обновление прошло успешно. Supabase возвращает измененные строки.
+            if response and response.data and len(response.data) > 0:
+                logger.info(f"Google Event ID '{google_event_id}' успешно обновлен для записи '{appointment_id}'.")
+                return True
+            else:
+                logger.warning(
+                    f"Обновление Google Event ID для записи '{appointment_id}' не дало результата (запись не найдена или не изменилась?).")
+                return False
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении Google Event ID для записи '{appointment_id}': {e}")
             return False

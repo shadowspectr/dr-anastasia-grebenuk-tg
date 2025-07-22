@@ -93,32 +93,27 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
     data = await state.get_data()
     user = callback.from_user
 
-    # Парсим дату и время для создания объекта datetime
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
-    # Создаем объект Appointment.
-    # Если поле google_event_id существует в модели Appointment, но пока не сохраняется в БД,
-    # оно будет None.
+    # Создаем объект Appointment, google_event_id пока None
     new_appointment = Appointment(
         client_name=user.full_name,
         client_telegram_id=user.id,
         service_id=data['service_id'],
         appointment_time=appointment_dt,
-        # google_event_id=None # Если поле google_event_id существует в модели Appointment
+        google_event_id=None # Пока что None
     )
 
-    # Добавляем запись в базу данных
+    # Добавляем запись в базу данных (получаем appointment_id)
     appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
-        # Успешно записались, отправляем подтверждение клиенту
         await callback.message.edit_text(
             "✅ Вы успешно записаны!\n\n"
             "Вам придет напоминание за день до визита. Ждем вас!"
         )
 
         # --- ОТПРАВКА УВЕДОМЛЕНИЯ АДМИНИСТРАТОРУ ---
-        # Присваиваем ID, полученный из БД, для полноты информации в уведомлении
         new_appointment.id = appointment_id
         await notify_admin_on_new_booking(
             bot=bot,
@@ -129,28 +124,30 @@ async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContex
         # --------------------------------------------
 
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
-        # Устанавливаем фиксированную длительность записи в 1 час (60 минут)
-        service_duration = 60
+        service_duration = 60 # Фиксированная длительность в 1 час
 
-        # Используем импортированный модуль для вызова функции
-        google_event_created = utils.google_calendar.create_google_calendar_event(
+        # Вызываем функцию создания события и получаем его ID
+        google_event_id = utils.google_calendar.create_google_calendar_event(
             appointment_time_str=f"{data['date']} {data['time']}",
             service_title=data['service_title'],
             client_name=user.full_name,
             service_duration_minutes=service_duration
         )
 
-        if google_event_created:
-            logger.info(f"Событие для клиента {user.id} успешно добавлено в Google Calendar.")
+        if google_event_id:
+            logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для клиента {user.id}.")
+            # Теперь сохраняем полученный google_event_id в базе данных
+            if await db.update_appointment_google_id(appointment_id, google_event_id):
+                logger.info(f"Google Event ID '{google_event_id}' успешно сохранен для записи '{appointment_id}'.")
+            else:
+                logger.warning(f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
         else:
-            logger.warning(f"Не удалось добавить событие для клиента {user.id} в Google Calendar.")
+            logger.warning(f"Не удалось создать событие для клиента {user.id} в Google Calendar.")
         # ------------------------------------
 
     else:
-        # Если произошла ошибка при записи в базу данных
         await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
 
-    # Очищаем состояние FSM после завершения или ошибки
     await state.clear()
 
 

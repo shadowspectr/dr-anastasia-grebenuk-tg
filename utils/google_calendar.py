@@ -25,19 +25,15 @@ def get_google_calendar_service():
         logger.error("GOOGLE_CALENDAR_ID не установлен в переменных окружения.")
         return None
 
-    # Проверяем наличие файла ключа сервисного аккаунта
     if not os.path.exists(SERVICE_ACCOUNT_FILE):
         logger.error(f"Файл ключа сервисного аккаунта '{SERVICE_ACCOUNT_FILE}' не найден. "
                      f"Убедитесь, что он существует в корне проекта.")
         return None
 
     try:
-        # Загружаем учетные данные из файла ключа сервисного аккаунта
         creds = service_account.Credentials.from_service_account_file(
             SERVICE_ACCOUNT_FILE, scopes=SCOPES
         )
-
-        # Строим объект сервиса Google Calendar
         service = build('calendar', 'v3', credentials=creds)
         logger.info("Успешно подключено к Google Calendar через сервисный аккаунт.")
         return service
@@ -49,9 +45,10 @@ def get_google_calendar_service():
         logger.error(f"Ошибка при подключении к Google Calendar через сервисный аккаунт: {e}")
         return None
 
+# --- ИЗМЕНЕННАЯ ФУНКЦИЯ ---
 def create_google_calendar_event(appointment_time_str: str, service_title: str, client_name: str, service_duration_minutes: int = 60):
     """
-    Создает событие в Google Calendar.
+    Создает событие в Google Calendar и возвращает ID созданного события.
 
     Args:
         appointment_time_str (str): Время записи в формате "YYYY-MM-DD HH:MM".
@@ -60,14 +57,13 @@ def create_google_calendar_event(appointment_time_str: str, service_title: str, 
         service_duration_minutes (int): Продолжительность услуги в минутах (по умолчанию 60).
 
     Returns:
-        bool: True, если событие успешно создано, False в противном случае.
+        Optional[str]: ID созданного события Google Calendar в случае успеха, иначе None.
     """
     service = get_google_calendar_service()
     if not service:
-        return False # Ошибка уже залогирована в get_google_calendar_service
+        return None # Ошибка уже залогирована в get_google_calendar_service
 
     try:
-        # Парсим время записи
         appointment_dt = datetime.strptime(appointment_time_str, '%Y-%m-%d %H:%M')
         end_time_dt = appointment_dt + timedelta(minutes=service_duration_minutes)
 
@@ -82,10 +78,6 @@ def create_google_calendar_event(appointment_time_str: str, service_title: str, 
                 'dateTime': end_time_dt.isoformat(),
                 'timeZone': 'Europe/Moscow', # <-- Укажите ваш часовой пояс!
             },
-            # Можно добавить email администратора, если он известен и требуется
-            # 'attendees': [
-            #     {'email': 'admin@example.com'},
-            # ],
             'reminders': {
                 'useDefault': False,
                 'overrides': [
@@ -95,15 +87,15 @@ def create_google_calendar_event(appointment_time_str: str, service_title: str, 
         }
 
         created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        event_id = created_event.get('id')
         logger.info(f"Событие Google Calendar создано: {created_event.get('htmlLink')}")
-        return True
+        return event_id # Возвращаем ID события
 
     except HttpError as error:
         logger.error(f'Произошла ошибка Google API: {error}')
-        # Проверяем, не связана ли ошибка с неверным CALENDAR_ID
         if error.resp.status == 404:
             logger.error(f"Календарь с ID '{CALENDAR_ID}' не найден. Проверьте правильность GOOGLE_CALENDAR_ID.")
-        return False
+        return None
     except Exception as e:
         logger.error(f'Произошла непредвиденная ошибка при создании события Google Calendar: {e}')
-        return False
+        return None

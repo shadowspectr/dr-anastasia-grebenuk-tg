@@ -30,5 +30,5 @@ class Appointment:
     status: str = 'active'
     reminded: bool = False
     created_at: Optional[datetime] = None
-    # Это поле не из БД, но мы используем его для удобства
     service_title: Optional[str] = None
+    google_event_id: Optional[str] = None # <-- ДОБАВИЛИ ЭТО ПОЛЕ!
