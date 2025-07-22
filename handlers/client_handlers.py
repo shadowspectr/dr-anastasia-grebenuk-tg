@@ -1,3 +1,5 @@
+# handlers/client_handlers.py
+
 import logging
 from aiogram import Router, types, F, Bot
 from aiogram.fsm.context import FSMContext
@@ -7,7 +9,6 @@ from database.models import Appointment
 from states.fsm_states import ClientStates
 from keyboards.client_keyboards import *
 from utils.notifications import notify_admin_on_new_booking
-# Импортируем модуль google_calendar, чтобы получить доступ к функции create_google_calendar_event
 import utils.google_calendar
 
 router = Router()
@@ -17,7 +18,6 @@ logger = logging.getLogger(__name__)
 # Старт флоу записи
 @router.callback_query(F.data == "client_book")
 async def client_start_booking(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    # Методы клавиатур теперь тоже могут быть асинхронными, если они делают запросы к БД
     keyboard = await get_service_categories_keyboard(db)
     await callback.message.edit_text("Выберите категорию услуг:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_category)
@@ -37,7 +37,6 @@ async def client_pick_category(callback: types.CallbackQuery, state: FSMContext,
 @router.callback_query(ClientStates.waiting_for_service, F.data.startswith("service_"))
 async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, db: Database):
     service_id = callback.data.split("_")[1]
-    # Используем await, так как метод теперь асинхронный
     service = await db.get_service_by_id(service_id)
 
     if not service:
@@ -62,8 +61,6 @@ async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db:
     date_str = callback.data.split("_")[1]
     await state.update_data(date=date_str)
     target_date = datetime.strptime(date_str, '%Y-%m-%d')
-    # Здесь get_time_slots_keyboard скорее всего использует db для проверки доступности,
-    # поэтому db передается. Если он не используется, можно убрать.
     keyboard = await get_time_slots_keyboard(target_date, db)
     await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
                                      reply_markup=keyboard)
@@ -77,36 +74,22 @@ async def client_pick_time(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(time=time_str)
     data = await state.get_data()
 
-    text = (f"<b>Подтвердите вашу запись:</b>\n\n"
-            f"<b>Услуга:</b> {data['service_title']}\n"
-            f"<b>Стоимость:</b> {data['service_price']} ₽\n"
-            f"<b>Дата:</b> {data['date']}\n"
-            f"<b>Время:</b> {data['time']}")
-
-    await callback.message.edit_text(text, reply_markup=get_confirmation_keyboard())
-    await state.set_state(ClientStates.waiting_for_confirmation)
-
-
-@router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
-    data = await state.get_data()
-    user = callback.from_user
-
-    # Сохраняем выбранные данные
+    # Здесь мы сохраняем данные, но еще не показываем финальное подтверждение.
+    # Это нужно, чтобы следующие шаги могли дополнить его.
     await state.update_data(
         service_title=data['service_title'],
         service_price=data['service_price'],
         date=data['date'],
-        time=data['time']
+        time=time_str
     )
 
-    # Отправляем клиенту сообщение с запросом номера телефона
+    # Теперь переходим к запросу номера телефона
     await callback.message.edit_text(
         "Отлично! Теперь, пожалуйста, укажите ваш контактный номер телефона (например, +79991234567).")
     await state.set_state(ClientStates.waiting_for_phone)  # Переходим в состояние ожидания номера
 
 
-# Шаг 7: Получение номера телефона
+# Шаг 6: Получение номера телефона
 @router.message(ClientStates.waiting_for_phone)
 async def client_provide_phone(message: types.Message, state: FSMContext, db: Database, bot: Bot):
     phone_number = message.text
@@ -115,7 +98,7 @@ async def client_provide_phone(message: types.Message, state: FSMContext, db: Da
 
     await state.update_data(phone_number=phone_number)  # Сохраняем номер телефона
 
-    # Получаем все данные для финального подтверждения
+    # Получаем ВСЕ данные для финального подтверждения
     data = await state.get_data()
 
     # --- ФИНАЛЬНОЕ ПОДТВЕРЖДЕНИЕ ---
@@ -124,20 +107,25 @@ async def client_provide_phone(message: types.Message, state: FSMContext, db: Da
             f"<b>Стоимость:</b> {data['service_price']} ₽\n"
             f"<b>Дата:</b> {data['date']}\n"
             f"<b>Время:</b> {data['time']}\n"
-            f"<b>Ваш номер:</b> {phone_number}")
+            f"<b>Ваш номер:</b> {phone_number}")  # Отображаем введенный номер
 
-    await message.answer(text,
-                         reply_markup=get_confirmation_keyboard())  # Отправляем новое сообщение, чтобы не редактировать предыдущее
-    await state.set_state(ClientStates.waiting_for_confirmation)
+    # Отправляем НОВОЕ сообщение с финальным подтверждением.
+    # Редактирование previous message (от бота) может быть некорректным,
+    # если оно уже было изменено клиентом (его сообщением с номером).
+    await message.answer(text, reply_markup=get_confirmation_keyboard())
+    await state.set_state(ClientStates.waiting_for_confirmation)  # Переходим в состояние финального подтверждения
 
 
-# --- ПЕРЕОПРЕДЕЛЕНИЕ КОНФИРМАЦИИ, ТАК КАК ТЕПЕРЬ У НАС ЕСТЬ НОМЕР ---
-
+# --- ОБРАБОТЧИК ФИНАЛЬНОГО ПОДТВЕРЖДЕНИЯ ---
+# Этот обработчик теперь будет срабатывать, когда клиент нажмет "Подтвердить"
+# после того, как указал номер телефона.
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
+    # Получаем все собранные данные из состояния
     data = await state.get_data()
     user = callback.from_user
 
+    # Парсим дату и время
     appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
 
     # Создаем объект Appointment, теперь с номером телефона
@@ -150,16 +138,18 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
         google_event_id=None  # Пока что None
     )
 
+    # Добавляем запись в базу данных
     appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
+        # Успешно записались
         await callback.message.edit_text(
             "✅ Вы успешно записаны!\n\n"
             "Вам придет напоминание за день до визита. Ждем вас!"
         )
 
         # --- Уведомление администратору ---
-        new_appointment.id = appointment_id
+        new_appointment.id = appointment_id  # Обновляем ID в объекте для уведомления
         await notify_admin_on_new_booking(
             bot=bot,
             appointment=new_appointment,
@@ -169,9 +159,9 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
         # ------------------------------------
 
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
-        service_duration = 60  # Фиксированная длительность в 1 час
+        service_duration = 60
 
-        # Вызываем функцию создания события в Google Calendar, включая номер телефона
+        # Вызываем функцию создания события в Google Calendar, передавая номер телефона
         google_event_id = utils.google_calendar.create_google_calendar_event(
             appointment_time_str=f"{data['date']} {data['time']}",
             service_title=data['service_title'],
@@ -192,22 +182,14 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
         # ------------------------------------
 
     else:
+        # Ошибка при записи в БД
         await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
 
-    await state.clear()
+    await state.clear()  # Очищаем состояние FSM
 
 
 # Отмена на любом этапе
 @router.callback_query(F.data == "cancel_booking")
 async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("Запись отменена.", reply_markup=get_client_main_keyboard())
-
-
-# Отмена на любом этапе
-@router.callback_query(F.data == "cancel_booking")
-async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    # Отправляем сообщение об отмене и клавиатуру главного меню
-    # Эта клавиатура не делает запросов в БД, поэтому await не нужен
     await callback.message.edit_text("Запись отменена.", reply_markup=get_client_main_keyboard())
