@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 from database.models import Appointment
 from utils.notifications import notify_admin_on_new_booking
 import utils.google_calendar
-
+import utils.gemini_api
 
 router = Router()
 # Фильтр, чтобы эти хэндлеры работали только для админа
