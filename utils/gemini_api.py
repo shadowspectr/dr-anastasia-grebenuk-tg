@@ -17,7 +17,7 @@ else:
     logger.error("GOOGLE_API_KEY не установлен. Интеграция с Gemini API невозможна.")
 
 
-def get_gemini_model(model_name: str = "gemini-2.0-flash-thinking-exp-01-21"):
+def get_gemini_model(model_name: str = "gemini-pro"):
     """
     Возвращает сконфигурированную модель Gemini.
     """
@@ -31,36 +31,58 @@ def get_gemini_model(model_name: str = "gemini-2.0-flash-thinking-exp-01-21"):
         return None
 
 
-async def generate_text(prompt: str, model_name: str = "gemini-2.0-flash-thinking-exp-01-21") -> Optional[str]:
+async def generate_text(prompt: str, model_name: str = "gemini-pro", max_chars_per_message: int = 4000) -> Optional[
+    List[str]]:
     """
-    Отправляет запрос к Gemini API и возвращает сгенерированный текст.
-
-    Args:
-        prompt (str): Текст запроса к модели.
-        model_name (str): Название модели (по умолчанию "gemini-pro").
-
-    Returns:
-        Optional[str]: Сгенерированный текст или None в случае ошибки.
+    Отправляет запрос к Gemini API, разбивает ответ на части, если он длинный,
+    и возвращает список строк. Предполагается, что Gemini API возвращает Markdown.
     """
     model = get_gemini_model(model_name)
     if not model:
         return None
 
     try:
-        # Запускаем генерацию текста
-        # Для Gemini API v1.0, это response = model.generate_content(prompt)
-        # Для Gemini API v1.5 (или более поздних), может быть chat.send_message()
-        # Учитывая, что мы делаем "text generation", будем использовать generate_content
-
-        # Важно: generate_content - это асинхронная функция, ее нужно await'ить
         response = await model.generate_content_async(prompt)
 
-        # Проверяем, есть ли текст в ответе
-        if response and response.text:
-            return response.text
-        else:
+        if not response or not response.text:
             logger.warning("Gemini API вернул пустой ответ или не удалось получить текст.")
             return None
+
+        full_text = response.text
+
+        if len(full_text) > max_chars_per_message:
+            parts = []
+            current_pos = 0
+
+            # Попытка разбить по переносу строки или пробелу, чтобы сохранить форматирование
+            while current_pos < len(full_text):
+                end_pos = min(current_pos + max_chars_per_message, len(full_text))
+
+                # Ищем последний символ новой строки или пробела перед end_pos
+                split_point = -1
+                if end_pos < len(full_text):  # Если не конец текста
+                    # Ищем символ новой строки (\n)
+                    nl_split = full_text.rfind('\n', current_pos, end_pos)
+                    if nl_split != -1:
+                        split_point = nl_split
+                    else:
+                        # Если нет переноса строки, ищем последний пробел
+                        sp_split = full_text.rfind(' ', current_pos, end_pos)
+                        if sp_split != -1:
+                            split_point = sp_split
+
+                if split_point == -1 or split_point == current_pos:  # Если не нашли подходящий разделитель
+                    split_point = end_pos  # Разделяем по символам
+
+                part = full_text[current_pos:split_point]
+                parts.append(part.strip())  # Удаляем лишние пробелы в начале/конце части
+
+                current_pos = split_point + 1  # Переходим к следующему символу после разделения
+
+            logger.info(f"Response was split into {len(parts)} parts.")
+            return parts
+        else:
+            return [full_text]
 
     except Exception as e:
         logger.error(f"Ошибка при обращении к Gemini API: {e}")
