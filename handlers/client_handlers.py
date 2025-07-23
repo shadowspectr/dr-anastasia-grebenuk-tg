@@ -56,31 +56,35 @@ async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, 
         return
 
     await state.update_data(service_id=service_id, service_title=service.title, service_price=service.price)
-    keyboard = await get_date_keyboard(db)
+
+    # --- ИСПРАВЛЕНИЕ: Убедитесь, что get_date_keyboard await-ится ---
+    keyboard = await get_date_keyboard(db)  # <-- ДОЛЖНО БЫТЬ AWAIT
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     await callback.message.edit_text(f"Вы выбрали: {service.title}.\nТеперь выберите удобный день:",
                                      reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_date)
 
 
-# --- Обработчик возврата к выбору УСЛУГ (из выбора даты) ---
+# --- ОБРАБОТЧИК ВОЗВРАТА К ВЫБОРУ УСЛУГ ---
 @router.callback_query(ClientStates.waiting_for_date, F.data == "back_to_service_choice")
 async def back_to_service_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    # Удаляем данные о выбранной дате
     await state.unset_data("date")
 
-    # Получаем сохраненные данные о категории
     data = await state.get_data()
     category_id = data.get('category_id')
 
     if not category_id:
         await callback.answer("Не удалось определить выбранную категорию.", show_alert=True)
-        await state.finish()  # Или вернуть на главный экран
+        await state.finish()
         return
 
-    # Возвращаемся к выбору услуг
-    keyboard = await get_services_keyboard(db, category_id)
+    # --- ИСПРАВЛЕНИЕ: Убедитесь, что get_services_keyboard await-ится ---
+    keyboard = await get_services_keyboard(db, category_id)  # <-- ДОЛЖНО БЫТЬ AWAIT
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     await callback.message.edit_text("Теперь выберите услугу:", reply_markup=keyboard)
-    await state.set_state(ClientStates.waiting_for_service)  # Возвращаем состояние
+    await state.set_state(ClientStates.waiting_for_service)
 
 # Шаг 4: Выбор даты
 @router.callback_query(ClientStates.waiting_for_date, F.data.startswith("date_"))
