@@ -9,6 +9,7 @@ from keyboards.admin_keyboards import *
 from keyboards.client_keyboards import *
 from states.fsm_states import AdminStates
 from aiogram.fsm.context import FSMContext
+from database.models import Appointment
 
 
 router = Router()
