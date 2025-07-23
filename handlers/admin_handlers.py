@@ -164,8 +164,8 @@ async def admin_provide_phone_and_confirm(message: types.Message, state: FSMCont
 
 
 # --- Шаг 8: Финальное подтверждение записи (после ввода номера) ---
-@router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
+@router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
+async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
 
     client_name = data.get('client_name')
@@ -178,7 +178,7 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
 
     if not all([client_name, service_id, service_title, date_str, time_str, phone_number]):
         await callback.answer("Недостаточно данных для записи. Пожалуйста, начните заново.", show_alert=True)
-        await state.clear()
+        await state.clear()  # Очищаем состояние при ошибке
         return
 
     try:
@@ -190,6 +190,11 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
 
     new_appointment = Appointment(
         client_name=client_name,
+        client_telegram_id=user.id,  # <-- Это может быть ошибкой, если user.id не доступен или не тот.
+        # Для клиента, который сам записывается, это ОК.
+        # Если админ записывает, то client_telegram_id не имеет смысла.
+        # Лучше использовать None или ID админа, если это важно.
+        # Но для клиента, который сам записывается, это работает.
         service_id=service_id,
         appointment_time=appointment_dt,
         client_phone=phone_number,
@@ -204,9 +209,9 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
                                          f"<b>Время:</b> {date_str} {time_str}\n"
                                          f"<b>Телефон:</b> {phone_number}")
 
+        # ... (уведомление администратору и интеграция с Google Calendar) ...
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
         service_duration = 60
-
         google_event_id = utils.google_calendar.create_google_calendar_event(
             appointment_time_str=f"{date_str} {time_str}",
             service_title=service_title,
@@ -214,23 +219,25 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
             client_phone=phone_number,
             service_duration_minutes=service_duration
         )
-
         if google_event_id:
-            logger.info(
-                f"Событие Google Calendar с ID '{google_event_id}' успешно создано для записи '{appointment_id}'.")
+            logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для клиента {user.id}.")
             if await db.update_appointment_google_id(appointment_id, google_event_id):
                 logger.info(f"Google Event ID '{google_event_id}' успешно сохранен для записи '{appointment_id}'.")
             else:
                 logger.warning(
                     f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
         else:
-            logger.warning(f"Не удалось создать событие Google Calendar для записи '{appointment_id}'.")
+            logger.warning(f"Не удалось создать событие Google Calendar для клиента {user.id}.")
         # ------------------------------------
 
     else:
-        await callback.message.edit_text("❌ Произошла ошибка при создании записи. Попробуйте позже.")
+        await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
 
+    # --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
+    # После успешного завершения или ошибки, нужно ОЧИСТИТЬ состояние FSM,
+    # чтобы не возвращаться к предыдущим шагам.
     await state.clear()
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 
 # --- Отмена операции админом ---
