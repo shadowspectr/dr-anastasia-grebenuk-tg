@@ -3,7 +3,7 @@
 import os
 import google.generativeai as genai
 import logging
-from typing import Optional
+from typing import Optional, List
 
 # Получаем API ключ из переменных окружения
 API_KEY = os.getenv('GOOGLE_API_KEY')
