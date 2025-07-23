@@ -17,7 +17,7 @@ else:
     logger.error("GOOGLE_API_KEY не установлен. Интеграция с Gemini API невозможна.")
 
 
-def get_gemini_model(model_name: str = "gemini-pro"):
+def get_gemini_model(model_name: str = "gemini-2.0-flash-thinking-exp-01-21"):
     """
     Возвращает сконфигурированную модель Gemini.
     """
