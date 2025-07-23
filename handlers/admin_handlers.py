@@ -131,18 +131,42 @@ async def admin_pick_time(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_confirmation)  # Переходим к подтверждению
 
 
-# --- Шаг 6: Получение номера телефона (для админа) ---
-# Этот шаг нужен, если администратор создает запись для клиента, у которого нет телефона в FSM.
-# Но мы хотим, чтобы администратор САМ вводил номер, если нужно.
-# Поэтому, мы можем сделать этот шаг ОБЯЗАТЕЛЬНЫМ для админа.
+# --- Шаг 6: Запрос номера телефона (для админа) ---
+# Этот шаг теперь вызывается после выбора времени, если пользователь нажал "Подтвердить".
+@router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
+async def admin_request_phone_number(callback: types.CallbackQuery, state: FSMContext):
+    logger.info("Admin confirmed booking details. Requesting phone number.")
 
+    # Редактируем сообщение, чтобы запросить номер телефона
+    await callback.message.edit_text("Пожалуйста, введите номер телефона клиента:")
+    await state.set_state(AdminStates.waiting_for_phone)
+
+
+# --- Шаг 7: Получение номера телефона и финальное подтверждение ---
+@router.message(AdminStates.waiting_for_phone)
+async def admin_provide_phone_and_confirm(message: types.Message, state: FSMContext, db: Database, bot: Bot):
+    phone_number = message.text
+    await state.update_data(phone_number=phone_number)  # Сохраняем номер телефона
+
+    data = await state.get_data()
+
+    # Формируем финальный текст подтверждения
+    text = (f"<b>Пожалуйста, проверьте детали вашей записи:</b>\n\n"
+            f"<b>Клиент:</b> {data.get('client_name', 'Не указано')}\n"
+            f"<b>Услуга:</b> {data.get('service_title', 'Не указано')}\n"
+            f"<b>Стоимость:</b> {data.get('service_price', 'Не указано')} ₽\n"
+            f"<b>Дата:</b> {data.get('date', 'Не указано')}\n"
+            f"<b>Время:</b> {data.get('time', 'Не указано')}\n"
+            f"<b>Ваш номер:</b> {phone_number}")
+
+    await message.answer(text, reply_markup=get_confirmation_keyboard())
+    await state.set_state(AdminStates.waiting_for_confirmation)  # Переходим в состояние финального подтверждения
+
+
+# --- Шаг 8: Финальное подтверждение записи (после ввода номера) ---
 @router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
-
-    # Если номера телефона нет (что маловероятно, если он запрашивался),
-    # то можно либо запросить его снова, либо продолжить без него.
-    # В нашем случае, мы его запрашиваем, так что он должен быть.
 
     client_name = data.get('client_name')
     service_id = data.get('service_id')
@@ -164,14 +188,12 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
         await state.clear()
         return
 
-    # Создаем объект Appointment
     new_appointment = Appointment(
         client_name=client_name,
-        # client_telegram_id будет None, так как админ сам создает запись, а не клиент
         service_id=service_id,
         appointment_time=appointment_dt,
         client_phone=phone_number,
-        google_event_id=None  # Пока что None
+        google_event_id=None
     )
 
     appointment_id = await db.add_appointment(new_appointment)
@@ -182,8 +204,6 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
                                          f"<b>Время:</b> {date_str} {time_str}\n"
                                          f"<b>Телефон:</b> {phone_number}")
 
-        # --- Уведомление администратору (админ создал запись, его уведомлять не нужно) ---
-        # Но если нужно уведомить кого-то другого, то здесь можно добавить
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
         service_duration = 60
 
@@ -213,18 +233,11 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
     await state.clear()
 
 
-# --- Отмена записи админом (если нужно) ---
-# Не нужно, так как админ сам создает запись, а не отменяет клиентскую.
-# Если админ может отменять/удалять записи, это делается через admin_appointment_details.
-
 # --- Отмена операции админом ---
-@router.callback_query(F.data == "cancel_admin_operation")  # Новая кнопка отмены
+@router.callback_query(F.data == "cancel_admin_operation")
 async def cancel_admin_operation(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("Операция отменена.")
-    # Возможно, здесь нужно вернуть главную клавиатуру админа
-    # await callback.message.answer("Главное меню админа", reply_markup=get_admin_main_keyboard()) # Или так
-
+    await callback.message.edit_text("Операция отменена.", reply_markup=get_admin_main_keyboard())
 
 
 
