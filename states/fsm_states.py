@@ -1,8 +1,13 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class AdminStates(StatesGroup):
-    # Пока не используем, но можно расширить для добавления записей админом
-    pass
+    waiting_for_client_name = State()  # Начальное состояние: ввод имени клиента
+    waiting_for_category = State()  # Затем, как у клиента
+    waiting_for_service = State()
+    waiting_for_date = State()
+    waiting_for_time = State()
+    waiting_for_phone = State()
+    waiting_for_confirmation = State()
 
 # states/fsm_states.py
 from aiogram.fsm.state import State, StatesGroup

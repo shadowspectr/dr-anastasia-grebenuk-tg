@@ -15,6 +15,215 @@ router.callback_query.filter(F.from_user.id == config.admin_id)
 logger = logging.getLogger(__name__)
 
 
+# --- Обработчик кнопки "Записать клиента" ---
+@router.callback_query(F.data == "admin_book_client")
+async def admin_start_booking_client(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    logger.info(f"Admin {callback.from_user.id} wants to book a client.")
+
+    # Начинаем FSM для администратора
+    await state.set_state(AdminStates.waiting_for_client_name)  # Первое состояние: ввод имени клиента
+    await callback.message.edit_text("Пожалуйста, введите имя клиента:")
+
+
+# --- Теперь добавляем обработчики для новых состояний AdminStates ---
+
+# Шаг 1: Ввод имени клиента
+@router.message(AdminStates.waiting_for_client_name)
+async def admin_get_client_name(message: types.Message, state: FSMContext, db: Database):
+    client_name = message.text
+    await state.update_data(client_name=client_name)
+
+    # Затем, как и у клиента, просим выбрать категорию
+    keyboard = await get_service_categories_keyboard(db)
+    await message.answer("Выберите категорию услуг:", reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_for_category)
+
+
+# Шаг 2: Выбор категории (для админа)
+@router.callback_query(AdminStates.waiting_for_category, F.data.startswith("category_"))
+async def admin_pick_category(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    category_id = callback.data.split("_")[1]
+    await state.update_data(category_id=category_id)
+    keyboard = await get_services_keyboard(db, category_id)
+    await callback.message.edit_text("Теперь выберите услугу:", reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_for_service)
+
+
+# --- Обработчик возврата от выбора услуг к категориям (для админа) ---
+@router.callback_query(AdminStates.waiting_for_service, F.data == "back_to_category_choice")
+async def admin_back_to_category_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    await state.update_data(service_id=None, service_title=None, service_price=None)  # Очищаем данные услуги
+
+    keyboard = await get_service_categories_keyboard(db)
+    await callback.message.edit_text("Выберите категорию услуг:", reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_for_category)
+
+
+# Шаг 3: Выбор услуги (для админа)
+@router.callback_query(AdminStates.waiting_for_service, F.data.startswith("service_"))
+async def admin_pick_service(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    service_id = callback.data.split("_")[1]
+    service = await db.get_service_by_id(service_id)
+
+    if not service:
+        await callback.answer("Услуга не найдена, попробуйте снова.", show_alert=True)
+        return
+
+    await state.update_data(service_id=service_id, service_title=service.title, service_price=service.price)
+    keyboard = await get_date_keyboard(db)  # Используем ту же клавиатуру дат
+    await callback.message.edit_text(f"Вы выбрали: {service.title}.\nТеперь выберите удобный день:",
+                                     reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_for_date)
+
+
+# --- Обработчик возврата от выбора времени к выбору даты (для админа) ---
+@router.callback_query(AdminStates.waiting_for_time, F.data == "back_to_date_choice")
+async def admin_back_to_date_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    await state.update_data(time=None)  # Очищаем выбранное время
+
+    data = await state.get_data()
+    date_str = data.get('date')
+    if not date_str:
+        await callback.answer("Не удалось определить выбранную дату.", show_alert=True)
+        await state.finish()
+        return
+
+    target_date = datetime.strptime(date_str, '%Y-%m-%d')
+    keyboard = await get_time_slots_keyboard(target_date, db)
+    await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
+                                     reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_for_time)
+
+
+# Шаг 4: Выбор даты (для админа)
+@router.callback_query(AdminStates.waiting_for_date, F.data.startswith("date_"))
+async def admin_pick_date(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    date_str = callback.data.split("_")[1]
+    await state.update_data(date=date_str)
+    target_date = datetime.strptime(date_str, '%Y-%m-%d')
+    keyboard = await get_time_slots_keyboard(target_date, db)
+    await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
+                                     reply_markup=keyboard)
+    await state.set_state(AdminStates.waiting_for_time)
+
+
+# Шаг 5: Выбор времени (для админа)
+@router.callback_query(AdminStates.waiting_for_time, F.data.startswith("time_"))
+async def admin_pick_time(callback: types.CallbackQuery, state: FSMContext):
+    time_str = callback.data.split("_")[1]
+    await state.update_data(time=time_str)
+
+    data = await state.get_data()
+
+    text = (f"<b>Подтвердите запись для клиента:</b>\n\n"
+            f"<b>Клиент:</b> {data.get('client_name', 'Не указано')}\n"
+            f"<b>Услуга:</b> {data.get('service_title', 'Не указано')}\n"
+            f"<b>Стоимость:</b> {data.get('service_price', 'Не указано')} ₽\n"
+            f"<b>Дата:</b> {data.get('date', 'Не указано')}\n"
+            f"<b>Время:</b> {time_str}\n"
+            f"<b>Номер телефона:</b> {data.get('phone_number', 'Не указан')}")
+
+    await callback.message.edit_text(text, reply_markup=get_confirmation_keyboard())
+    await state.set_state(AdminStates.waiting_for_confirmation)  # Переходим к подтверждению
+
+
+# --- Шаг 6: Получение номера телефона (для админа) ---
+# Этот шаг нужен, если администратор создает запись для клиента, у которого нет телефона в FSM.
+# Но мы хотим, чтобы администратор САМ вводил номер, если нужно.
+# Поэтому, мы можем сделать этот шаг ОБЯЗАТЕЛЬНЫМ для админа.
+
+@router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
+async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
+    data = await state.get_data()
+
+    # Если номера телефона нет (что маловероятно, если он запрашивался),
+    # то можно либо запросить его снова, либо продолжить без него.
+    # В нашем случае, мы его запрашиваем, так что он должен быть.
+
+    client_name = data.get('client_name')
+    service_id = data.get('service_id')
+    service_title = data.get('service_title')
+    service_price = data.get('service_price')
+    date_str = data.get('date')
+    time_str = data.get('time')
+    phone_number = data.get('phone_number')
+
+    if not all([client_name, service_id, service_title, date_str, time_str, phone_number]):
+        await callback.answer("Недостаточно данных для записи. Пожалуйста, начните заново.", show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        appointment_dt = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
+    except ValueError:
+        await callback.answer("Ошибка в формате даты или времени.", show_alert=True)
+        await state.clear()
+        return
+
+    # Создаем объект Appointment
+    new_appointment = Appointment(
+        client_name=client_name,
+        # client_telegram_id будет None, так как админ сам создает запись, а не клиент
+        service_id=service_id,
+        appointment_time=appointment_dt,
+        client_phone=phone_number,
+        google_event_id=None  # Пока что None
+    )
+
+    appointment_id = await db.add_appointment(new_appointment)
+
+    if appointment_id:
+        await callback.message.edit_text(f"✅ Запись для клиента <b>{client_name}</b> успешно создана!\n\n"
+                                         f"<b>Услуга:</b> {service_title}\n"
+                                         f"<b>Время:</b> {date_str} {time_str}\n"
+                                         f"<b>Телефон:</b> {phone_number}")
+
+        # --- Уведомление администратору (админ создал запись, его уведомлять не нужно) ---
+        # Но если нужно уведомить кого-то другого, то здесь можно добавить
+        # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
+        service_duration = 60
+
+        google_event_id = utils.google_calendar.create_google_calendar_event(
+            appointment_time_str=f"{date_str} {time_str}",
+            service_title=service_title,
+            client_name=client_name,
+            client_phone=phone_number,
+            service_duration_minutes=service_duration
+        )
+
+        if google_event_id:
+            logger.info(
+                f"Событие Google Calendar с ID '{google_event_id}' успешно создано для записи '{appointment_id}'.")
+            if await db.update_appointment_google_id(appointment_id, google_event_id):
+                logger.info(f"Google Event ID '{google_event_id}' успешно сохранен для записи '{appointment_id}'.")
+            else:
+                logger.warning(
+                    f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
+        else:
+            logger.warning(f"Не удалось создать событие Google Calendar для записи '{appointment_id}'.")
+        # ------------------------------------
+
+    else:
+        await callback.message.edit_text("❌ Произошла ошибка при создании записи. Попробуйте позже.")
+
+    await state.clear()
+
+
+# --- Отмена записи админом (если нужно) ---
+# Не нужно, так как админ сам создает запись, а не отменяет клиентскую.
+# Если админ может отменять/удалять записи, это делается через admin_appointment_details.
+
+# --- Отмена операции админом ---
+@router.callback_query(F.data == "cancel_admin_operation")  # Новая кнопка отмены
+async def cancel_admin_operation(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Операция отменена.")
+    # Возможно, здесь нужно вернуть главную клавиатуру админа
+    # await callback.message.answer("Главное меню админа", reply_markup=get_admin_main_keyboard()) # Или так
+
+
+
+
 # --- Вспомогательная функция для проверки изменений ---
 def should_edit_message(current_text: str, new_text: str, current_markup, new_markup):
     """

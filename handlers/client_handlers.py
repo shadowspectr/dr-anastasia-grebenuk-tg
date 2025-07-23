@@ -99,7 +99,7 @@ async def back_to_service_choice(callback: types.CallbackQuery, state: FSMContex
     await callback.message.edit_text("Теперь выберите услугу:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_service)  # Возвращаем состояние
 
-    
+
 # Шаг 4: Выбор даты
 @router.callback_query(ClientStates.waiting_for_date, F.data.startswith("date_"))
 async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db: Database):
