@@ -132,21 +132,21 @@ async def admin_pick_time(callback: types.CallbackQuery, state: FSMContext):
 
 
 # --- Шаг 6: Запрос номера телефона (для админа) ---
-# Этот шаг теперь вызывается после выбора времени, если пользователь нажал "Подтвердить".
+# Этот шаг теперь вызывается после выбора времени, если админ нажал "Подтвердить".
+# Мы переходим в waiting_for_phone, чтобы получить номер.
 @router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def admin_request_phone_number(callback: types.CallbackQuery, state: FSMContext):
     logger.info("Admin confirmed booking details. Requesting phone number.")
-
-    # Редактируем сообщение, чтобы запросить номер телефона
-    await callback.message.edit_text("Пожалуйста, введите номер телефона клиента:")
     await state.set_state(AdminStates.waiting_for_phone)
+    await callback.message.edit_text("Пожалуйста, введите номер телефона клиента:")
 
 
 # --- Шаг 7: Получение номера телефона и финальное подтверждение ---
+# Этот обработчик теперь отвечает за ПОЛУЧЕНИЕ номера и ПОКАЗ финального подтверждения.
 @router.message(AdminStates.waiting_for_phone)
 async def admin_provide_phone_and_confirm(message: types.Message, state: FSMContext, db: Database, bot: Bot):
     phone_number = message.text
-    await state.update_data(phone_number=phone_number)  # Сохраняем номер телефона
+    await state.update_data(phone_number=phone_number)
 
     data = await state.get_data()
 
@@ -159,13 +159,20 @@ async def admin_provide_phone_and_confirm(message: types.Message, state: FSMCont
             f"<b>Время:</b> {data.get('time', 'Не указано')}\n"
             f"<b>Ваш номер:</b> {phone_number}")
 
+    # --- ИСПРАВЛЕНИЕ: Отправляем НОВОЕ сообщение, а не редактируем ---
+    # Редактирование предыдущего сообщения (от бота) может быть некорректным,
+    # если оно было изменено клиентом (его сообщением с номером).
     await message.answer(text, reply_markup=get_confirmation_keyboard())
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     await state.set_state(AdminStates.waiting_for_confirmation)  # Переходим в состояние финального подтверждения
 
 
 # --- Шаг 8: Финальное подтверждение записи (после ввода номера) ---
+# Этот обработчик теперь срабатывает, когда админ нажимает "Подтвердить"
+# после того, как ввел номер телефона.
 @router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
+async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
 
     client_name = data.get('client_name')
@@ -178,7 +185,7 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
 
     if not all([client_name, service_id, service_title, date_str, time_str, phone_number]):
         await callback.answer("Недостаточно данных для записи. Пожалуйста, начните заново.", show_alert=True)
-        await state.clear()  # Очищаем состояние при ошибке
+        await state.clear()
         return
 
     try:
@@ -190,11 +197,6 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
 
     new_appointment = Appointment(
         client_name=client_name,
-        client_telegram_id=user.id,  # <-- Это может быть ошибкой, если user.id не доступен или не тот.
-        # Для клиента, который сам записывается, это ОК.
-        # Если админ записывает, то client_telegram_id не имеет смысла.
-        # Лучше использовать None или ID админа, если это важно.
-        # Но для клиента, который сам записывается, это работает.
         service_id=service_id,
         appointment_time=appointment_dt,
         client_phone=phone_number,
@@ -209,7 +211,6 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
                                          f"<b>Время:</b> {date_str} {time_str}\n"
                                          f"<b>Телефон:</b> {phone_number}")
 
-        # ... (уведомление администратору и интеграция с Google Calendar) ...
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
         service_duration = 60
         google_event_id = utils.google_calendar.create_google_calendar_event(
@@ -219,25 +220,23 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
             client_phone=phone_number,
             service_duration_minutes=service_duration
         )
+
         if google_event_id:
-            logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для клиента {user.id}.")
+            logger.info(
+                f"Событие Google Calendar с ID '{google_event_id}' успешно создано для записи '{appointment_id}'.")
             if await db.update_appointment_google_id(appointment_id, google_event_id):
                 logger.info(f"Google Event ID '{google_event_id}' успешно сохранен для записи '{appointment_id}'.")
             else:
                 logger.warning(
                     f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
         else:
-            logger.warning(f"Не удалось создать событие Google Calendar для клиента {user.id}.")
+            logger.warning(f"Не удалось создать событие Google Calendar для записи '{appointment_id}'.")
         # ------------------------------------
 
     else:
-        await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
+        await callback.message.edit_text("❌ Произошла ошибка при создании записи. Попробуйте позже.")
 
-    # --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
-    # После успешного завершения или ошибки, нужно ОЧИСТИТЬ состояние FSM,
-    # чтобы не возвращаться к предыдущим шагам.
-    await state.clear()
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+    await state.clear()  # --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Очистка состояния ---
 
 
 # --- Отмена операции админом ---
