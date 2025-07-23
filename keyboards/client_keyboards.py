@@ -22,7 +22,8 @@ async def get_service_categories_keyboard(db: Database):
     return builder.as_markup()
 
 
-async def get_services_keyboard(db: Database, category_id: str):
+# --- get_services_keyboard ДОЛЖНА БЫТЬ ASYNC И AWAIT'ИТЬ build_keyboard ---
+async def get_services_keyboard(db: Database, category_id: str):  # <-- Функция async
     async def get_services():
         return await db.get_services_by_category(category_id)
 
@@ -35,15 +36,18 @@ async def get_services_keyboard(db: Database, category_id: str):
                 callback_data=f"service_{service.id}"
             ))
 
-        # --- Убедитесь, что callback_data совпадает ---
         builder.add(types.InlineKeyboardButton(
             text="🔙 Назад к категориям",
-            callback_data="back_to_category_choice"  # <-- Вот это значение должно совпадать
+            callback_data="back_to_category_choice"
         ))
         builder.adjust(1)
         return builder.as_markup()
 
-    return build_keyboard()
+    # --- ИСПРАВЛЕНИЕ: await build_keyboard() ---
+    # Функция get_services_keyboard возвращает markup, а не корутину.
+    # Поэтому нужно await'ить build_keyboard.
+    return await build_keyboard()  # <-- Здесь был пропущен await
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 
 # --- Функция get_date_keyboard ДОЛЖНА БЫТЬ ASYNC ---
