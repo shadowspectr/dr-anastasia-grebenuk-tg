@@ -40,9 +40,13 @@ async def client_pick_category(callback: types.CallbackQuery, state: FSMContext,
 # --- Обработчик возврата к выбору категорий ---
 @router.callback_query(ClientStates.waiting_for_service, F.data == "back_to_category_choice")
 async def back_to_category_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    await state.unset_data("service_id")
-    await state.unset_data("service_title")
-    await state.unset_data("service_price")
+    logger.info("User requested to go back to category selection.")
+
+    # --- ИСПРАВЛЕНИЕ: Используем update_data(key=None) вместо unset_data ---
+    await state.update_data(service_id=None)
+    await state.update_data(service_title=None)
+    await state.update_data(service_price=None)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     keyboard = await get_service_categories_keyboard(db)
     await callback.message.edit_text("Выберите категорию услуг:", reply_markup=keyboard)
