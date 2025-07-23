@@ -10,7 +10,8 @@ from keyboards.client_keyboards import *
 from states.fsm_states import AdminStates
 from aiogram.fsm.context import FSMContext
 from database.models import Appointment
-
+from utils.notifications import notify_admin_on_new_booking
+import utils.google_calendar
 
 router = Router()
 # Фильтр, чтобы эти хэндлеры работали только для админа
