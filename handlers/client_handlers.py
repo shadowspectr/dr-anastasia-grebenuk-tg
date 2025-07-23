@@ -75,10 +75,17 @@ async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, 
 
 
 # --- ОБРАБОТЧИК ВОЗВРАТА К ВЫБОРУ УСЛУГ ---
+# --- ОБРАБОТЧИК ВОЗВРАТА К ВЫБОРУ УСЛУГ ---
 @router.callback_query(ClientStates.waiting_for_date, F.data == "back_to_service_choice")
 async def back_to_service_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    await state.unset_data("date")
+    logger.info("User requested to go back to service selection.")
 
+    # --- ИСПРАВЛЕНИЕ: Используем update_data(key=None) вместо unset_data ---
+    await state.update_data(date=None)  # Удаляем выбранную дату
+    await state.update_data(time=None)  # Удаляем выбранное время (если оно было сохранено)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+    # Получаем сохраненные данные о категории
     data = await state.get_data()
     category_id = data.get('category_id')
 
@@ -87,13 +94,12 @@ async def back_to_service_choice(callback: types.CallbackQuery, state: FSMContex
         await state.finish()
         return
 
-    # --- ИСПРАВЛЕНИЕ: Убедитесь, что get_services_keyboard await-ится ---
-    keyboard = await get_services_keyboard(db, category_id)  # <-- ДОЛЖНО БЫТЬ AWAIT
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
+    # Возвращаемся к выбору услуг
+    keyboard = await get_services_keyboard(db, category_id)
     await callback.message.edit_text("Теперь выберите услугу:", reply_markup=keyboard)
-    await state.set_state(ClientStates.waiting_for_service)
+    await state.set_state(ClientStates.waiting_for_service)  # Возвращаем состояние
 
+    
 # Шаг 4: Выбор даты
 @router.callback_query(ClientStates.waiting_for_date, F.data.startswith("date_"))
 async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db: Database):
