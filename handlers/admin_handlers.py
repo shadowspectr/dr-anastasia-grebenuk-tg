@@ -13,12 +13,76 @@ from database.models import Appointment
 from utils.notifications import notify_admin_on_new_booking
 import utils.google_calendar
 
+
 router = Router()
 # Фильтр, чтобы эти хэндлеры работали только для админа
 router.message.filter(F.from_user.id == config.admin_id)
 router.callback_query.filter(F.from_user.id == config.admin_id)
 
 logger = logging.getLogger(__name__)
+
+
+# --- Обработчик кнопки "Нейросеть" ---
+@router.callback_query(F.data == "admin_gemini_chat")
+async def admin_gemini_start_chat(callback: types.CallbackQuery, state: FSMContext):
+    logger.info(f"Admin {callback.from_user.id} wants to use Gemini AI.")
+
+    await state.set_state(AdminStates.waiting_for_gemini_prompt)  # Переходим в состояние ожидания запроса
+    await callback.message.edit_text("Привет! Я твой помощник Gemini.\n"
+                                     "Задай мне вопрос или дай задание. Чтобы выйти из чата, отправь /cancel.\n\n"
+                                     "<b>Что ты хочешь сделать?</b>")
+
+
+# --- Обработчик для получения запроса от админа ---
+@router.message(AdminStates.waiting_for_gemini_prompt)
+async def admin_gemini_prompt(message: types.Message, state: FSMContext, bot: Bot):
+    user_prompt = message.text
+
+    if user_prompt.lower() == '/cancel':
+        await state.finish()  # Завершаем FSM
+        await message.answer("Диалог с нейросетью завершен.", reply_markup=get_admin_main_keyboard())
+        return
+
+    # Отправляем "печатает..."
+    async with state.proxy() as data:
+        data['last_message_id'] = message.message_id  # Сохраняем ID сообщения, чтобы его отредактировать
+
+    # Здесь мы будем показывать, что бот "думает"
+    # Например, можно отправить temporary сообщение
+    processing_message = await message.answer("🧠 Обрабатываю ваш запрос...")
+
+    # Отправляем запрос к Gemini API
+    gemini_response = await utils.gemini_api.generate_text(user_prompt)
+
+    # Удаляем "обрабатывающее" сообщение
+    await bot.delete_message(chat_id=message.chat.id, message_id=processing_message.message_id)
+
+    if gemini_response:
+        await message.answer(f"✅ Ответ от Gemini:\n\n{gemini_response}", parse_mode='HTML')
+    else:
+        await message.answer("❌ Не удалось получить ответ от нейросети. Попробуйте позже.")
+
+    # Оставляем админа в том же состоянии, чтобы он мог продолжить диалог
+    # await state.set_state(AdminStates.waiting_for_gemini_prompt) # Если нужно, чтобы он мог сразу задать следующий вопрос
+    # Но лучше выйти из FSM, чтобы он не застрял, если захочет вернуться к другим функциям.
+    # Либо можно добавить кнопку "Продолжить с Gemini" / "Вернуться в меню".
+    # Пока что, после ответа, будем считать, что диалог с Gemini закончен, и админ должен начать с кнопки.
+    # Если же хотите, чтобы он мог продолжать диалог, то:
+    # await state.set_state(AdminStates.waiting_for_gemini_prompt) # Остаемся в том же состоянии
+
+    # --- ИСПРАВЛЕНИЕ: Если хотим, чтобы после ответа админ мог продолжить чат,
+    # --- то нужно оставить его в состоянии waiting_for_gemini_prompt.
+    # --- Если хотим, чтобы он вернулся в меню, то state.clear().
+    # --- Предположим, что хотим продолжить диалог.
+    await state.set_state(AdminStates.waiting_for_gemini_prompt)  # Остаемся в состоянии
+
+
+# --- Обработчик отмены диалога с Gemini ---
+# Это нужно, чтобы выйти из FSM, если админ ввел /cancel
+@router.message(AdminStates.waiting_for_gemini_prompt, F.text.lower() == "/cancel")
+async def cancel_gemini_chat(message: types.Message, state: FSMContext):
+    await state.finish()  # Завершаем FSM
+    await message.answer("Диалог с нейросетью завершен.", reply_markup=get_admin_main_keyboard())
 
 
 # --- Обработчик кнопки "Записать клиента" ---

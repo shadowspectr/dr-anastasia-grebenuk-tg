@@ -8,6 +8,7 @@ def get_admin_main_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📅 Записи на сегодня", callback_data="admin_today"))
     builder.add(types.InlineKeyboardButton(text="➕ Записать клиента", callback_data="admin_book_client"))
+    builder.add(types.InlineKeyboardButton(text="🧠 Нейросеть", callback_data="admin_gemini_chat"))
     builder.adjust(1)
     return builder.as_markup()
 
