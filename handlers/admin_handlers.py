@@ -24,26 +24,22 @@ logger = logging.getLogger(__name__)
 async def admin_start_booking_client(callback: types.CallbackQuery, state: FSMContext, db: Database):
     logger.info(f"Admin {callback.from_user.id} wants to book a client.")
 
-    # Начинаем FSM для администратора
-    await state.set_state(AdminStates.waiting_for_client_name)  # Первое состояние: ввод имени клиента
+    await state.set_state(AdminStates.waiting_for_client_name)
     await callback.message.edit_text("Пожалуйста, введите имя клиента:")
 
 
-# --- Теперь добавляем обработчики для новых состояний AdminStates ---
-
-# Шаг 1: Ввод имени клиента
+# --- Шаг 1: Ввод имени клиента ---
 @router.message(AdminStates.waiting_for_client_name)
 async def admin_get_client_name(message: types.Message, state: FSMContext, db: Database):
     client_name = message.text
     await state.update_data(client_name=client_name)
 
-    # Затем, как и у клиента, просим выбрать категорию
     keyboard = await get_service_categories_keyboard(db)
     await message.answer("Выберите категорию услуг:", reply_markup=keyboard)
     await state.set_state(AdminStates.waiting_for_category)
 
 
-# Шаг 2: Выбор категории (для админа)
+# --- Шаг 2: Выбор категории (для админа) ---
 @router.callback_query(AdminStates.waiting_for_category, F.data.startswith("category_"))
 async def admin_pick_category(callback: types.CallbackQuery, state: FSMContext, db: Database):
     category_id = callback.data.split("_")[1]
@@ -56,14 +52,14 @@ async def admin_pick_category(callback: types.CallbackQuery, state: FSMContext, 
 # --- Обработчик возврата от выбора услуг к категориям (для админа) ---
 @router.callback_query(AdminStates.waiting_for_service, F.data == "back_to_category_choice")
 async def admin_back_to_category_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    await state.update_data(service_id=None, service_title=None, service_price=None)  # Очищаем данные услуги
+    await state.update_data(service_id=None, service_title=None, service_price=None)
 
     keyboard = await get_service_categories_keyboard(db)
     await callback.message.edit_text("Выберите категорию услуг:", reply_markup=keyboard)
     await state.set_state(AdminStates.waiting_for_category)
 
 
-# Шаг 3: Выбор услуги (для админа)
+# --- Шаг 3: Выбор услуги (для админа) ---
 @router.callback_query(AdminStates.waiting_for_service, F.data.startswith("service_"))
 async def admin_pick_service(callback: types.CallbackQuery, state: FSMContext, db: Database):
     service_id = callback.data.split("_")[1]
@@ -74,7 +70,7 @@ async def admin_pick_service(callback: types.CallbackQuery, state: FSMContext, d
         return
 
     await state.update_data(service_id=service_id, service_title=service.title, service_price=service.price)
-    keyboard = await get_date_keyboard(db)  # Используем ту же клавиатуру дат
+    keyboard = await get_date_keyboard(db)
     await callback.message.edit_text(f"Вы выбрали: {service.title}.\nТеперь выберите удобный день:",
                                      reply_markup=keyboard)
     await state.set_state(AdminStates.waiting_for_date)
@@ -83,7 +79,7 @@ async def admin_pick_service(callback: types.CallbackQuery, state: FSMContext, d
 # --- Обработчик возврата от выбора времени к выбору даты (для админа) ---
 @router.callback_query(AdminStates.waiting_for_time, F.data == "back_to_date_choice")
 async def admin_back_to_date_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
-    await state.update_data(time=None)  # Очищаем выбранное время
+    await state.update_data(time=None)
 
     data = await state.get_data()
     date_str = data.get('date')
@@ -119,58 +115,44 @@ async def admin_pick_time(callback: types.CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
 
+    # Формируем текст для подтверждения, ЗАПРАШИВАЯ номер телефона
     text = (f"<b>Подтвердите запись для клиента:</b>\n\n"
             f"<b>Клиент:</b> {data.get('client_name', 'Не указано')}\n"
             f"<b>Услуга:</b> {data.get('service_title', 'Не указано')}\n"
             f"<b>Стоимость:</b> {data.get('service_price', 'Не указано')} ₽\n"
             f"<b>Дата:</b> {data.get('date', 'Не указано')}\n"
             f"<b>Время:</b> {time_str}\n"
-            f"<b>Номер телефона:</b> {data.get('phone_number', 'Не указан')}")
+            f"<b>Номер телефона:</b> _(сейчас будет запрошен)_")  # Место для номера, пока не введен
 
-    await callback.message.edit_text(text, reply_markup=get_confirmation_keyboard())
-    await state.set_state(AdminStates.waiting_for_confirmation)  # Переходим к подтверждению
-
-
-# --- Шаг 6: Запрос номера телефона (для админа) ---
-# Этот шаг теперь вызывается после выбора времени, если админ нажал "Подтвердить".
-# Мы переходим в waiting_for_phone, чтобы получить номер.
-@router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def admin_request_phone_number(callback: types.CallbackQuery, state: FSMContext):
-    logger.info("Admin confirmed booking details. Requesting phone number.")
-    await state.set_state(AdminStates.waiting_for_phone)
-    await callback.message.edit_text("Пожалуйста, введите номер телефона клиента:")
+    await callback.message.edit_text(text,
+                                     reply_markup=get_confirmation_keyboard())  # Показываем кнопки подтверждения/отмены
+    await state.set_state(AdminStates.waiting_for_phone)  # ПЕРЕХОДИМ В СОСТОЯНИЕ ОЖИДАНИЯ НОМЕРА
 
 
-# --- Шаг 7: Получение номера телефона и финальное подтверждение ---
-# Этот обработчик теперь отвечает за ПОЛУЧЕНИЕ номера и ПОКАЗ финального подтверждения.
+# --- Шаг 6: Получение номера телефона ---
+# Этот обработчик срабатывает, когда администратор вводит номер телефона
 @router.message(AdminStates.waiting_for_phone)
-async def admin_provide_phone_and_confirm(message: types.Message, state: FSMContext, db: Database, bot: Bot):
+async def admin_provide_phone_number(message: types.Message, state: FSMContext, db: Database, bot: Bot):
     phone_number = message.text
-    await state.update_data(phone_number=phone_number)
+    await state.update_data(phone_number=phone_number)  # Сохраняем номер телефона
 
     data = await state.get_data()
 
-    # Формируем финальный текст подтверждения
+    # Теперь, когда у нас есть ВСЕ данные, показываем финальное подтверждение
     text = (f"<b>Пожалуйста, проверьте детали вашей записи:</b>\n\n"
             f"<b>Клиент:</b> {data.get('client_name', 'Не указано')}\n"
             f"<b>Услуга:</b> {data.get('service_title', 'Не указано')}\n"
             f"<b>Стоимость:</b> {data.get('service_price', 'Не указано')} ₽\n"
             f"<b>Дата:</b> {data.get('date', 'Не указано')}\n"
             f"<b>Время:</b> {data.get('time', 'Не указано')}\n"
-            f"<b>Ваш номер:</b> {phone_number}")
+            f"<b>Номер телефона:</b> {phone_number}")  # Используем введенный номер
 
-    # --- ИСПРАВЛЕНИЕ: Отправляем НОВОЕ сообщение, а не редактируем ---
-    # Редактирование предыдущего сообщения (от бота) может быть некорректным,
-    # если оно было изменено клиентом (его сообщением с номером).
-    await message.answer(text, reply_markup=get_confirmation_keyboard())
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
+    await message.answer(text, reply_markup=get_confirmation_keyboard())  # Отправляем новое сообщение с кнопками
     await state.set_state(AdminStates.waiting_for_confirmation)  # Переходим в состояние финального подтверждения
 
 
-# --- Шаг 8: Финальное подтверждение записи (после ввода номера) ---
-# Этот обработчик теперь срабатывает, когда админ нажимает "Подтвердить"
-# после того, как ввел номер телефона.
+# --- Шаг 7: Финальное подтверждение записи (после ввода номера) ---
+# Этот обработчик срабатывает, когда админ нажимает "Подтвердить" после ввода номера.
 @router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
@@ -197,6 +179,7 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
 
     new_appointment = Appointment(
         client_name=client_name,
+        # client_telegram_id будет None, так как админ сам создает запись
         service_id=service_id,
         appointment_time=appointment_dt,
         client_phone=phone_number,
