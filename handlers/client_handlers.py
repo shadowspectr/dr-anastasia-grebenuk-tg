@@ -28,7 +28,11 @@ async def client_start_booking(callback: types.CallbackQuery, state: FSMContext,
 async def client_pick_category(callback: types.CallbackQuery, state: FSMContext, db: Database):
     category_id = callback.data.split("_")[1]
     await state.update_data(category_id=category_id)
+
+    # --- ИСПРАВЛЕНИЕ: Теперь get_services_keyboard - async, нужно await ---
     keyboard = await get_services_keyboard(db, category_id)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     await callback.message.edit_text("Теперь выберите услугу:", reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_service)
 
