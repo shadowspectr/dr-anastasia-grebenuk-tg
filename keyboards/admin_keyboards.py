@@ -6,6 +6,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def get_admin_main_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📅 Записи на сегодня", callback_data="admin_today"))
+    builder.add(types.InlineKeyboardButton(text="➕ Записать клиента", callback_data="admin_book_client"))
+    builder.adjust(1)
     return builder.as_markup()
 
 # Принимаем строковый app_id (UUID)
