@@ -31,7 +31,7 @@ def get_gemini_model(model_name: str = "gemini-2.0-flash-thinking-exp-01-21"):
         return None
 
 
-async def generate_text(prompt: str, model_name: str = "gemini-pro") -> Optional[str]:
+async def generate_text(prompt: str, model_name: str = "gemini-2.0-flash-thinking-exp-01-21") -> Optional[str]:
     """
     Отправляет запрос к Gemini API и возвращает сгенерированный текст.
 
