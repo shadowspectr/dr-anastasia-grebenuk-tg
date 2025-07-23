@@ -164,7 +164,7 @@ async def admin_provide_phone_and_confirm(message: types.Message, state: FSMCont
 
 
 # --- Шаг 8: Финальное подтверждение записи (после ввода номера) ---
-@router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
+@router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
 
