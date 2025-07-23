@@ -107,7 +107,7 @@ async def admin_pick_date(callback: types.CallbackQuery, state: FSMContext, db: 
     await state.set_state(AdminStates.waiting_for_time)
 
 
-# Шаг 5: Выбор времени (для админа)
+# --- Шаг 5: Выбор времени (для админа) ---
 @router.callback_query(AdminStates.waiting_for_time, F.data.startswith("time_"))
 async def admin_pick_time(callback: types.CallbackQuery, state: FSMContext):
     time_str = callback.data.split("_")[1]
@@ -115,22 +115,23 @@ async def admin_pick_time(callback: types.CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
 
-    # Формируем текст для подтверждения, ЗАПРАШИВАЯ номер телефона
+    # Формируем текст для подтверждения, который также запросит номер телефона
     text = (f"<b>Подтвердите запись для клиента:</b>\n\n"
             f"<b>Клиент:</b> {data.get('client_name', 'Не указано')}\n"
             f"<b>Услуга:</b> {data.get('service_title', 'Не указано')}\n"
             f"<b>Стоимость:</b> {data.get('service_price', 'Не указано')} ₽\n"
             f"<b>Дата:</b> {data.get('date', 'Не указано')}\n"
             f"<b>Время:</b> {time_str}\n"
-            f"<b>Номер телефона:</b> _(сейчас будет запрошен)_")  # Место для номера, пока не введен
+            f"<b>Номер телефона:</b> _(сейчас будет запрошен)_")  # Место для номера
 
-    await callback.message.edit_text(text,
-                                     reply_markup=get_confirmation_keyboard())  # Показываем кнопки подтверждения/отмены
-    await state.set_state(AdminStates.waiting_for_phone)  # ПЕРЕХОДИМ В СОСТОЯНИЕ ОЖИДАНИЯ НОМЕРА
+    # Отправляем новое сообщение с кнопками подтверждения/отмены
+    await callback.message.edit_text(text, reply_markup=get_confirmation_keyboard())
+    await state.set_state(AdminStates.waiting_for_phone)  # Переходим в состояние ожидания номера
 
 
-# --- Шаг 6: Получение номера телефона ---
-# Этот обработчик срабатывает, когда администратор вводит номер телефона
+# --- Шаг 6: Запрос номера телефона (для админа) ---
+# Этот обработчик срабатывает, когда админ находится в состоянии waiting_for_phone
+# и отправляет сообщение (номер телефона).
 @router.message(AdminStates.waiting_for_phone)
 async def admin_provide_phone_number(message: types.Message, state: FSMContext, db: Database, bot: Bot):
     phone_number = message.text
@@ -138,7 +139,7 @@ async def admin_provide_phone_number(message: types.Message, state: FSMContext, 
 
     data = await state.get_data()
 
-    # Теперь, когда у нас есть ВСЕ данные, показываем финальное подтверждение
+    # Формируем финальный текст подтверждения, теперь с номером телефона
     text = (f"<b>Пожалуйста, проверьте детали вашей записи:</b>\n\n"
             f"<b>Клиент:</b> {data.get('client_name', 'Не указано')}\n"
             f"<b>Услуга:</b> {data.get('service_title', 'Не указано')}\n"
@@ -147,12 +148,12 @@ async def admin_provide_phone_number(message: types.Message, state: FSMContext, 
             f"<b>Время:</b> {data.get('time', 'Не указано')}\n"
             f"<b>Номер телефона:</b> {phone_number}")  # Используем введенный номер
 
-    await message.answer(text, reply_markup=get_confirmation_keyboard())  # Отправляем новое сообщение с кнопками
+    # Отправляем новое сообщение с кнопками подтверждения/отмены
+    await message.answer(text, reply_markup=get_confirmation_keyboard())
     await state.set_state(AdminStates.waiting_for_confirmation)  # Переходим в состояние финального подтверждения
 
 
 # --- Шаг 7: Финальное подтверждение записи (после ввода номера) ---
-# Этот обработчик срабатывает, когда админ нажимает "Подтвердить" после ввода номера.
 @router.callback_query(AdminStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
@@ -165,6 +166,7 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
     time_str = data.get('time')
     phone_number = data.get('phone_number')
 
+    # Проверка наличия всех данных
     if not all([client_name, service_id, service_title, date_str, time_str, phone_number]):
         await callback.answer("Недостаточно данных для записи. Пожалуйста, начните заново.", show_alert=True)
         await state.clear()
@@ -179,11 +181,10 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
 
     new_appointment = Appointment(
         client_name=client_name,
-        # client_telegram_id будет None, так как админ сам создает запись
         service_id=service_id,
         appointment_time=appointment_dt,
         client_phone=phone_number,
-        google_event_id=None
+        google_event_id=None  # Пока что None
     )
 
     appointment_id = await db.add_appointment(new_appointment)
@@ -219,8 +220,14 @@ async def admin_confirm_booking(callback: types.CallbackQuery, state: FSMContext
     else:
         await callback.message.edit_text("❌ Произошла ошибка при создании записи. Попробуйте позже.")
 
-    await state.clear()  # --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Очистка состояния ---
+    await state.clear()  # --- Очистка состояния FSM ---
 
+
+# --- Отмена операции админом ---
+@router.callback_query(F.data == "cancel_admin_operation")
+async def cancel_admin_operation(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Операция отменена.", reply_markup=get_admin_main_keyboard())
 
 # --- Отмена операции админом ---
 @router.callback_query(F.data == "cancel_admin_operation")
