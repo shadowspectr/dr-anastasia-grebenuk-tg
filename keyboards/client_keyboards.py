@@ -23,15 +23,27 @@ async def get_service_categories_keyboard(db: Database):
 
 
 async def get_services_keyboard(db: Database, category_id: str):
-    builder = InlineKeyboardBuilder()
-    # Используем await
-    services = await db.get_services_by_category(category_id)
-    for service in services:
-        builder.add(
-            InlineKeyboardButton(text=f"{service.title} ({service.price} ₽)", callback_data=f"service_{service.id}"))
-    builder.add(InlineKeyboardButton(text="🔙 Назад к категориям", callback_data="client_book"))
-    builder.adjust(1)
-    return builder.as_markup()
+    async def get_services():
+        return await db.get_services_by_category(category_id)
+
+    async def build_keyboard():
+        services = await get_services()
+        builder = InlineKeyboardBuilder()
+        for service in services:
+            builder.add(types.InlineKeyboardButton(
+                text=f"{service.title} ({service.price} ₽)",
+                callback_data=f"service_{service.id}"
+            ))
+
+        # --- Убедитесь, что callback_data совпадает ---
+        builder.add(types.InlineKeyboardButton(
+            text="🔙 Назад к категориям",
+            callback_data="back_to_category_choice"  # <-- Вот это значение должно совпадать
+        ))
+        builder.adjust(1)
+        return builder.as_markup()
+
+    return build_keyboard()
 
 
 # --- Функция get_date_keyboard ДОЛЖНА БЫТЬ ASYNC ---

@@ -62,6 +62,26 @@ async def client_pick_service(callback: types.CallbackQuery, state: FSMContext, 
     await state.set_state(ClientStates.waiting_for_date)
 
 
+# --- Обработчик возврата к выбору УСЛУГ (из выбора даты) ---
+@router.callback_query(ClientStates.waiting_for_date, F.data == "back_to_service_choice")
+async def back_to_service_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    # Удаляем данные о выбранной дате
+    await state.unset_data("date")
+
+    # Получаем сохраненные данные о категории
+    data = await state.get_data()
+    category_id = data.get('category_id')
+
+    if not category_id:
+        await callback.answer("Не удалось определить выбранную категорию.", show_alert=True)
+        await state.finish()  # Или вернуть на главный экран
+        return
+
+    # Возвращаемся к выбору услуг
+    keyboard = await get_services_keyboard(db, category_id)
+    await callback.message.edit_text("Теперь выберите услугу:", reply_markup=keyboard)
+    await state.set_state(ClientStates.waiting_for_service)  # Возвращаем состояние
+
 # Шаг 4: Выбор даты
 @router.callback_query(ClientStates.waiting_for_date, F.data.startswith("date_"))
 async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db: Database):
@@ -77,9 +97,11 @@ async def client_pick_date(callback: types.CallbackQuery, state: FSMContext, db:
 
 # --- ОБРАБОТЧИК ВОЗВРАТА К ВЫБОРУ ДНЯ ---
 @router.callback_query(ClientStates.waiting_for_time, F.data == "back_to_date_choice")
-async def back_to_date_choice(callback: types.CallbackQuery, state: FSMContext,
-                              db: Database):  # <-- Убедитесь, что db здесь есть
-    await state.unset_data("time")  # Удаляем выбранное время
+async def back_to_date_choice(callback: types.CallbackQuery, state: FSMContext, db: Database):
+    # --- ИСПРАВЛЕНИЕ: Удаляем данные корректным образом ---
+    # Вместо unset_data, используем update_data с None
+    await state.update_data(time=None)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     data = await state.get_data()
     date_str = data.get('date')
@@ -88,11 +110,7 @@ async def back_to_date_choice(callback: types.CallbackQuery, state: FSMContext,
         return await state.finish()
 
     target_date = datetime.strptime(date_str, '%Y-%m-%d')
-
-    # --- ИСПРАВЛЕНИЕ: Передаем db в get_time_slots_keyboard ---
     keyboard = await get_time_slots_keyboard(target_date, db)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
     await callback.message.edit_text(f"Выбрана дата: {date_str}.\nТеперь выберите свободное время:",
                                      reply_markup=keyboard)
     await state.set_state(ClientStates.waiting_for_time)  # Остаемся в том же состоянии
