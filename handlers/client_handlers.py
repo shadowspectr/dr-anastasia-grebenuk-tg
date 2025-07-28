@@ -183,7 +183,11 @@ async def client_provide_phone_and_confirm(message: types.Message, state: FSMCon
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
 async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
-    user = callback.from_user
+    user = callback.from_user # user здесь нужен для получения telegram_id клиента
+
+    # --- ДОБАВИМ ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ ---
+    logger.info(f"Starting final confirmation. Current FSM data: {data}")
+    # --- КОНЕЦ ЛОГИРОВАНИЯ ---
 
     client_name = data.get('client_name')
     service_id = data.get('service_id')
@@ -191,7 +195,13 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
     service_price = data.get('service_price')
     date_str = data.get('date')
     time_str = data.get('time')
-    phone_number = data.get('phone_number')  # <-- Убедитесь, что phone_number здесь есть!
+    phone_number = data.get('phone_number')
+
+    # --- ЛОГИРОВАНИЕ ОТСУТСТВУЮЩИХ ДАННЫХ ---
+    missing_data = [key for key in ['client_name', 'service_id', 'service_title', 'date', 'time', 'phone_number'] if not data.get(key)]
+    if missing_data:
+        logger.warning(f"Missing data for confirmation: {missing_data}. FSM data: {data}")
+    # --- КОНЕЦ ЛОГИРОВАНИЯ ---
 
     if not all([client_name, service_id, service_title, date_str, time_str, phone_number]):
         await callback.answer("Недостаточно данных для записи. Пожалуйста, начните заново.", show_alert=True)
@@ -207,10 +217,15 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
 
     new_appointment = Appointment(
         client_name=client_name,
-        client_telegram_id=user.id,
+        client_telegram_id=user.id, # ID того, кто нажал кнопку, т.е. админа, если он создает запись
+                                   # Если это клиент сам записывается, это будет его ID.
+                                   # Если админ создает для клиента, то user.id может быть админом.
+                                   # Возможно, стоит передавать client_telegram_id как отдельный параметр,
+                                   # если он получается из другого источника.
+                                   # Сейчас это ID админа, который нажал кнопку.
         service_id=service_id,
         appointment_time=appointment_dt,
-        client_phone=phone_number,  # <-- Номер телефона уже должен быть здесь
+        client_phone=phone_number,
         google_event_id=None
     )
 
@@ -220,45 +235,42 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
         await callback.message.edit_text(f"✅ Запись для клиента <b>{client_name}</b> успешно создана!\n\n"
                                          f"<b>Услуга:</b> {service_title}\n"
                                          f"<b>Время:</b> {date_str} {time_str}\n"
-                                         f"<b>Телефон:</b> {phone_number}")  # Отображаем телефон в сообщении
+                                         f"<b>Телефон:</b> {phone_number}")
 
-        # --- Уведомление администратору ---
+
         new_appointment.id = appointment_id
         await notify_admin_on_new_booking(
-            bot=bot,
-            appointment=new_appointment,
-            service_title=service_title,
-            service_price=service_price
-        )
+             bot=bot,
+             appointment=new_appointment,
+             service_title=service_title,
+             service_price=service_price
+         )
         # ------------------------------------
 
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
         service_duration = 60
-        # --- Убедитесь, что phone_number передается здесь ---
         google_event_id = utils.google_calendar.create_google_calendar_event(
             appointment_time_str=f"{date_str} {time_str}",
             service_title=service_title,
             client_name=client_name,
-            client_phone=phone_number,  # <-- Передаем номер телефона
+            client_phone=phone_number,
             service_duration_minutes=service_duration
         )
-        # --- КОНЕЦ ПРОВЕРКИ ---
 
         if google_event_id:
-            logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для клиента {user.id}.")
+            logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для записи '{appointment_id}'.")
             if await db.update_appointment_google_id(appointment_id, google_event_id):
                 logger.info(f"Google Event ID '{google_event_id}' успешно сохранен для записи '{appointment_id}'.")
             else:
-                logger.warning(
-                    f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
+                logger.warning(f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
         else:
-            logger.warning(f"Не удалось создать событие Google Calendar для клиента {user.id}.")
+            logger.warning(f"Не удалось создать событие Google Calendar для записи '{appointment_id}'.")
         # ------------------------------------
 
     else:
-        await callback.message.edit_text("❌ Произошла ошибка при записи. Попробуйте позже.")
+        await callback.message.edit_text("❌ Произошла ошибка при создании записи. Попробуйте позже.")
 
-    await state.clear()
+    await state.clear() # Очищаем состояние FSM
 
 
 # Отмена на любом этапе
