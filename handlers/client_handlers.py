@@ -185,54 +185,64 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
     data = await state.get_data()
     user = callback.from_user
 
-    # Проверяем, есть ли все необходимые данные
-    required_keys = ['service_title', 'service_price', 'date', 'time', 'phone_number']
-    if not all(key in data and data[key] for key in required_keys):
-        logger.error(f"Missing data for final confirmation: {data}. User: {user.id}")
-        await callback.answer("Произошла ошибка при сборе данных. Попробуйте начать запись заново.", show_alert=True)
+    client_name = data.get('client_name')
+    service_id = data.get('service_id')
+    service_title = data.get('service_title')
+    service_price = data.get('service_price')
+    date_str = data.get('date')
+    time_str = data.get('time')
+    phone_number = data.get('phone_number')  # <-- Убедитесь, что phone_number здесь есть!
+
+    if not all([client_name, service_id, service_title, date_str, time_str, phone_number]):
+        await callback.answer("Недостаточно данных для записи. Пожалуйста, начните заново.", show_alert=True)
         await state.clear()
         return
 
-    appointment_dt = datetime.strptime(f"{data['date']} {data['time']}", '%Y-%m-%d %H:%M')
+    try:
+        appointment_dt = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
+    except ValueError:
+        await callback.answer("Ошибка в формате даты или времени.", show_alert=True)
+        await state.clear()
+        return
 
-    # Создаем объект Appointment
     new_appointment = Appointment(
-        client_name=user.full_name,
+        client_name=client_name,
         client_telegram_id=user.id,
-        service_id=data['service_id'],
+        service_id=service_id,
         appointment_time=appointment_dt,
-        client_phone=data.get('phone_number'),
-        google_event_id=None  # Пока что None
+        client_phone=phone_number,  # <-- Номер телефона уже должен быть здесь
+        google_event_id=None
     )
 
     appointment_id = await db.add_appointment(new_appointment)
 
     if appointment_id:
-        await callback.message.edit_text(
-            "✅ Вы успешно записаны!\n\n"
-            "Вам придет напоминание за день до визита. Ждем вас!"
-        )
+        await callback.message.edit_text(f"✅ Запись для клиента <b>{client_name}</b> успешно создана!\n\n"
+                                         f"<b>Услуга:</b> {service_title}\n"
+                                         f"<b>Время:</b> {date_str} {time_str}\n"
+                                         f"<b>Телефон:</b> {phone_number}")  # Отображаем телефон в сообщении
 
         # --- Уведомление администратору ---
         new_appointment.id = appointment_id
         await notify_admin_on_new_booking(
             bot=bot,
             appointment=new_appointment,
-            service_title=data['service_title'],
-            service_price=data['service_price']
+            service_title=service_title,
+            service_price=service_price
         )
         # ------------------------------------
 
         # --- ИНТЕГРАЦИЯ С GOOGLE CALENDAR ---
         service_duration = 60
-
+        # --- Убедитесь, что phone_number передается здесь ---
         google_event_id = utils.google_calendar.create_google_calendar_event(
-            appointment_time_str=f"{data['date']} {data['time']}",
-            service_title=data['service_title'],
-            client_name=user.full_name,
-            client_phone=data.get('phone_number'),
+            appointment_time_str=f"{date_str} {time_str}",
+            service_title=service_title,
+            client_name=client_name,
+            client_phone=phone_number,  # <-- Передаем номер телефона
             service_duration_minutes=service_duration
         )
+        # --- КОНЕЦ ПРОВЕРКИ ---
 
         if google_event_id:
             logger.info(f"Событие Google Calendar с ID '{google_event_id}' успешно создано для клиента {user.id}.")
@@ -242,7 +252,7 @@ async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSM
                 logger.warning(
                     f"Не удалось сохранить Google Event ID '{google_event_id}' для записи '{appointment_id}'.")
         else:
-            logger.warning(f"Не удалось создать событие для клиента {user.id} в Google Calendar.")
+            logger.warning(f"Не удалось создать событие Google Calendar для клиента {user.id}.")
         # ------------------------------------
 
     else:

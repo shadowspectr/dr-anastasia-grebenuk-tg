@@ -48,18 +48,20 @@ def get_google_calendar_service():
         logger.error(f"Ошибка при подключении к Google Calendar: {e}")
         return None
 
+
 def create_google_calendar_event(appointment_time_str: str, service_title: str, client_name: str,
-                                 client_phone: Optional[str] = None, service_duration_minutes: int = 60) -> Optional[str]:
+                                 client_phone: Optional[str] = None, service_duration_minutes: int = 60) -> Optional[
+    str]:
     """
     Создает событие в Google Calendar и возвращает ID созданного события.
-
+    ---
     Args:
         appointment_time_str (str): Время записи в формате "YYYY-MM-DD HH:MM".
         service_title (str): Название услуги.
         client_name (str): Имя клиента.
-        client_phone (Optional[str]): Номер телефона клиента.
+        client_phone (Optional[str]): Номер телефона клиента. <-- Убедитесь, что этот параметр есть
         service_duration_minutes (int): Продолжительность услуги в минутах (по умолчанию 60).
-
+    ---
     Returns:
         Optional[str]: ID созданного события Google Calendar в случае успеха, иначе None.
     """
@@ -71,29 +73,40 @@ def create_google_calendar_event(appointment_time_str: str, service_title: str, 
         appointment_dt = datetime.strptime(appointment_time_str, '%Y-%m-%d %H:%M')
         end_time_dt = appointment_dt + timedelta(minutes=service_duration_minutes)
 
-        # Формируем описание события, включая номер телефона, если он есть
+        # --- Формируем описание события, ВКЛЮЧАЯ номер телефона ---
         description_lines = [
             f'Запись для клиента: {client_name}',
             f'Услуга: {service_title}'
         ]
-        if client_phone:
+        if client_phone:  # Если номер телефона есть, добавляем его
             description_lines.append(f'Телефон: {client_phone}')
+        # --- КОНЕЦ ФОРМИРОВАНИЯ ОПИСАНИЯ ---
 
         event = {
             'summary': f'{service_title} - {client_name}',
             'description': '\n'.join(description_lines),
-            'start': {'dateTime': appointment_dt.isoformat(), 'timeZone': 'Europe/Moscow'}, # <-- Укажите ваш часовой пояс!
-            'end': {'dateTime': end_time_dt.isoformat(), 'timeZone': 'Europe/Moscow'},   # <-- Укажите ваш часовой пояс!
+            'start': {'dateTime': appointment_dt.isoformat(), 'timeZone': 'Europe/Moscow'},
+            # <-- Укажите ваш часовой пояс!
+            'end': {'dateTime': end_time_dt.isoformat(), 'timeZone': 'Europe/Moscow'},  # <-- Укажите ваш часовой пояс!
             'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 1440}]},
         }
 
-        created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        # --- ВАЖНО: Execute() может быть синхронным ---
+        # Если в других местах мы убирали await перед execute, то и здесь, возможно,
+        # нужно так же, и обернуть в asyncio.to_thread.
+        # Я предполагаю, что create_google_calendar_service настроил клиент так,
+        # что build('calendar', 'v3', ...) возвращает объект, у которого execute() - синхронный.
+
+        # --- ИСПРАВЛЕНИЕ: Вызов синхронного execute через asyncio.to_thread ---
+        created_event = await asyncio.to_thread(service.events().insert(calendarId=CALENDAR_ID, body=event).execute)
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
         event_id = created_event.get('id')
         logger.info(f"Событие Google Calendar создано: {created_event.get('htmlLink')}")
         return event_id
 
     except HttpError as error:
-        logger.error(f'Произошла ошибка Google API: {error}')
+        logger.error(f'Произошла ошибка Google API при создании события: {error}')
         if error.resp.status == 404:
             logger.error(f"Календарь с ID '{CALENDAR_ID}' не найден. Проверьте правильность GOOGLE_CALENDAR_ID.")
         return None
