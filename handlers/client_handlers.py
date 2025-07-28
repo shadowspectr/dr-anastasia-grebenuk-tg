@@ -135,7 +135,7 @@ async def client_provide_phone(message: types.Message, state: FSMContext, db: Da
 # --- Шаг 7: Финальное подтверждение записи ---
 # Этот обработчик срабатывает, когда клиент нажимает "Подтвердить" после ввода номера.
 @router.callback_query(ClientStates.waiting_for_confirmation, F.data == "confirm_booking")
-async def client_confirm_booking(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
+async def client_confirm_booking_final(callback: types.CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
     user = callback.from_user  # Получаем пользователя, который нажал кнопку
 
