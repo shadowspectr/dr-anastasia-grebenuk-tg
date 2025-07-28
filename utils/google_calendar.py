@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional # <-- ДОБАВЛЕНО
+from typing import Optional, List# <-- ДОБАВЛЕНО
 # Импорт для сервисных аккаунтов
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
