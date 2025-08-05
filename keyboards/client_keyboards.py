@@ -58,14 +58,14 @@ async def get_date_keyboard(db: Database):
     builder = InlineKeyboardBuilder()
     today = datetime.now().date()
     
-    # Получаем периоды отпуска
-    vacation_periods = db.get_vacation_periods() # Предполагаем, что этот метод синхронный
-
-    # --- ЛОГИКА ПОИСКА ПЕРВОГО ДОСТУПНОГО ДНЯ ---
+    # --- ИСПРАВЛЕНИЕ: await перед вызовом db.get_vacation_periods() ---
+    vacation_periods = await db.get_vacation_periods()
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+    
     first_available_date = None
-    current_check_date = today + timedelta(days=1) # Начинаем проверку со следующего дня
+    current_check_date = today + timedelta(days=1)
 
-    while not first_available_date and current_check_date < today + timedelta(days=14): # Ищем в пределах 2 недель, чтобы не зациклиться
+    while not first_available_date and current_check_date < today + timedelta(days=14):
         is_available = True
         for period in vacation_periods:
             if period['start_date'] <= current_check_date <= period['end_date']:
@@ -73,27 +73,23 @@ async def get_date_keyboard(db: Database):
                 break
         
         if is_available:
-            first_available_date = current_date
-            break # Нашли первый доступный день
+            first_available_date = current_check_date
+            break
 
         current_check_date += timedelta(days=1)
-    # --- КОНЕЦ ПОИСКА ПЕРВОГО ДОСТУПНОГО ДНЯ ---
 
     if not first_available_date:
-        # Если за 2 недели не нашли ни одного доступного дня (маловероятно, но возможно)
         logger.warning("No available dates found in the next 14 days.")
-        # Можно показать сообщение и кнопку "Вернуться" или "Отменить"
         builder.add(types.InlineKeyboardButton(text="Нет доступных дат", callback_data="no_dates_available"))
         builder.add(types.InlineKeyboardButton(text="🔙 Назад к услугам", callback_data="back_to_service_choice"))
         builder.adjust(1)
         return builder.as_markup()
 
-    # --- Отображаем 7 дней, начиная с первого доступного ---
-    for i in range(7): # Показываем 7 дней
+    # Отображаем 7 дней, начиная с первого доступного
+    for i in range(7):
         current_date = first_available_date + timedelta(days=i)
         date_str = current_date.strftime('%Y-%m-%d')
         
-        # Проверяем, не попадает ли current_date в период отпуска
         is_available = True
         for period in vacation_periods:
             if period['start_date'] <= current_date <= period['end_date']:
@@ -105,14 +101,14 @@ async def get_date_keyboard(db: Database):
                 text=f"{current_date.strftime('%d.%m')} ({current_date.strftime('%a')})",
                 callback_data=f"date_{date_str}"
             ))
-        # Если день в отпуске, мы его просто пропускаем, не добавляя кнопку
-
-    # Кнопка "Назад" для выбора услуги
+        else:
+            logger.info(f"Date {current_date} is in vacation period. Skipping.")
+            
     builder.add(types.InlineKeyboardButton(
         text="🔙 Назад к услугам",
         callback_data="back_to_service_choice"
     ))
-    builder.adjust(3) # Например, 3 кнопки в ряду
+    builder.adjust(3)
     return builder.as_markup()
 
 
