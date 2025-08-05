@@ -1,8 +1,9 @@
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db_supabase import Database
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from aiogram import types
+import asyncio
 
 
 def get_client_main_keyboard():
@@ -51,56 +52,47 @@ async def get_services_keyboard(db: Database, category_id: str):  # <-- Функ
 
 
 # --- Функция get_date_keyboard ДОЛЖНА БЫТЬ ASYNC ---
-async def get_date_keyboard(db: Database):
+async def get_date_keyboard(db: Database): # Функция async
     builder = InlineKeyboardBuilder()
     today = datetime.now().date()
+    
+    # Получаем периоды отпуска
+    # Важно: db.get_vacation_periods() должен быть await-able, но т.к. он не async,
+    # мы можем его вызывать напрямую, или обернуть в asyncio.to_thread, если он синхронный
+    # В данном случае, предполагаем, что он синхронный.
+    vacation_periods = db.get_vacation_periods() # <-- Вызываем синхронно
 
-    available_weekdays = {1, 3, 4}  # Tuesday, Thursday, Friday
-
-    days_added = 0
-
-    # Список для дней недели на русском
-    # Понедельник - 0, Вторник - 1, ..., Воскресенье - 6
-    days_of_week_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-
-    for i in range(1, 15):
+    for i in range(1, 8): # Смотрим на 7 дней вперед
         current_date = today + timedelta(days=i)
+        date_str = current_date.strftime('%Y-%m-%d')
+        
+        is_available = True
+        # Проверяем, не попадает ли current_date в период отпуска
+        for period in vacation_periods:
+            if period['start_date'] <= current_date <= period['end_date']:
+                is_available = False
+                break # Если нашли совпадение, дальше проверять не нужно
 
-        if current_date.weekday() in available_weekdays:
-            date_str = current_date.strftime('%Y-%m-%d')
-
-            # --- ИСПРАВЛЕНИЕ: Форматирование даты с русским днем недели ---
-            day_name_ru = days_of_week_ru[current_date.weekday()]  # Получаем сокращенное название дня
-
-            button_text = f"{current_date.strftime('%d.%m')} ({day_name_ru})"
-            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
+        if is_available:
+            # --- Проверка занятых слотов (если нужно) ---
+            # Если вы хотите показывать только дни, где есть свободные слоты,
+            # нужно вызвать await db.get_appointments_for_day(current_date)
+            # и проверить количество записей.
+            # Для начала, покажем все доступные дни.
+            
             builder.add(types.InlineKeyboardButton(
-                text=button_text,
+                text=f"{current_date.strftime('%d.%m')} ({current_date.strftime('%a')})",
                 callback_data=f"date_{date_str}"
             ))
-            days_added += 1
-            # Перенос на новую строку каждые 3 кнопки
-            if days_added % 3 == 0:
-                builder.adjust(3)
+        else:
+            # Можно показать день как недоступный, или просто пропустить
+            logger.info(f"Date {current_date} is in vacation period. Skipping.")
 
-    # Если последний ряд не полный, adjust(3) может работать некорректно.
-    # Лучше использовать adjust() без аргументов, чтобы он сам рассчитал.
-    # Или же, более сложная логика для adjust.
-    # Пока что оставляем adjust(3) для примерного вида.
-
-    # Кнопка "Назад"
     builder.add(types.InlineKeyboardButton(
         text="🔙 Назад к услугам",
         callback_data="back_to_service_choice"
     ))
-    # adjust() без аргументов пытается распределить кнопки по рядам.
-    # Но если у нас есть кнопка "Назад", которая добавляется отдельно,
-    # лучше явно указать adjust для кнопок дней, а для "Назад" отдельно.
-    # Или, просто использовать adjust(1) для всех, если ряды не критичны.
-    # Здесь попробуем adjust(1) для всех, чтобы было предсказуемо.
-    builder.adjust(1)  # Для всех кнопок, включая "Назад"
-
+    builder.adjust(3)
     return builder.as_markup()
 
 

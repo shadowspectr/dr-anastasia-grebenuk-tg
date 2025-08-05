@@ -313,3 +313,44 @@ class Database:
         except Exception as e:
             logger.error(f"Ошибка при обновлении Google Event ID для записи '{appointment_id}': {e}", exc_info=True)
             return False
+
+    async def get_vacation_periods(self) -> List[dict]:
+        """
+        Получает список всех периодов отпуска из таблицы vacation_periods.
+        Возвращает список словарей, где каждый словарь содержит 'start_date' и 'end_date'.
+        """
+        try:
+            # Получаем только нужные поля и сортируем по дате начала
+            query_builder = self.client.table('vacation_periods').select('start_date, end_date').order('start_date')
+            response = await asyncio.to_thread(query_builder.execute) # Используем to_thread для синхронного execute
+            
+            if not response.data:
+                return []
+            
+            # Парсим даты, чтобы они были в формате datetime.date
+            vacation_periods = []
+            for period in response.data:
+                start_date = self.parse_date(period.get('start_date')) # Используем parse_date, а не parse_datetime
+                end_date = self.parse_date(period.get('end_date'))
+                
+                if start_date and end_date:
+                    vacation_periods.append({'start_date': start_date, 'end_date': end_date})
+            
+            return vacation_periods
+            
+        except Exception as e:
+            logger.error(f"Error fetching vacation periods: {e}")
+            return []
+
+    # --- Вспомогательный метод для парсинга только даты (date, а не datetime) ---
+    def parse_date(self, iso_string: Optional[str]) -> Optional[date]:
+        """Вспомогательная функция для парсинга дат из Supabase."""
+        if not iso_string:
+            return None
+        try:
+            # Supabase возвращает даты в формате 'YYYY-MM-DD'
+            return datetime.fromisoformat(iso_string).date()
+        except (ValueError, TypeError):
+            logger.warning(f"Could not parse date string: {iso_string}")
+            return None
+    # --- КОНЕЦ ВСПОМОГАТЕЛЬНОГО МЕТОДА ---
