@@ -56,12 +56,10 @@ async def get_date_keyboard(db: Database): # Функция async
     builder = InlineKeyboardBuilder()
     today = datetime.now().date()
     
-    # Получаем периоды отпуска
-    # Важно: db.get_vacation_periods() должен быть await-able, но т.к. он не async,
-    # мы можем его вызывать напрямую, или обернуть в asyncio.to_thread, если он синхронный
-    # В данном случае, предполагаем, что он синхронный.
-    vacation_periods = db.get_vacation_periods() # <-- Вызываем синхронно
-
+    # --- ИСПРАВЛЕНИЕ: await перед вызовом db.get_vacation_periods() ---
+    vacation_periods = await db.get_vacation_periods()
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+    
     for i in range(1, 8): # Смотрим на 7 дней вперед
         current_date = today + timedelta(days=i)
         date_str = current_date.strftime('%Y-%m-%d')
@@ -71,21 +69,14 @@ async def get_date_keyboard(db: Database): # Функция async
         for period in vacation_periods:
             if period['start_date'] <= current_date <= period['end_date']:
                 is_available = False
-                break # Если нашли совпадение, дальше проверять не нужно
+                break 
 
         if is_available:
-            # --- Проверка занятых слотов (если нужно) ---
-            # Если вы хотите показывать только дни, где есть свободные слоты,
-            # нужно вызвать await db.get_appointments_for_day(current_date)
-            # и проверить количество записей.
-            # Для начала, покажем все доступные дни.
-            
             builder.add(types.InlineKeyboardButton(
                 text=f"{current_date.strftime('%d.%m')} ({current_date.strftime('%a')})",
                 callback_data=f"date_{date_str}"
             ))
         else:
-            # Можно показать день как недоступный, или просто пропустить
             logger.info(f"Date {current_date} is in vacation period. Skipping.")
 
     builder.add(types.InlineKeyboardButton(
