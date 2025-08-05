@@ -3,7 +3,7 @@
 import logging
 from typing import List, Optional
 from dataclasses import asdict, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, date
 
 # Импортируем asyncio для to_thread
 import asyncio
