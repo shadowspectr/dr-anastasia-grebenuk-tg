@@ -4,7 +4,9 @@ from database.db_supabase import Database
 from datetime import datetime, timedelta, date
 from aiogram import types
 import asyncio
+import logging
 
+logger = logging.getLogger(__name__)
 
 def get_client_main_keyboard():
     # Эта функция не обращается к БД, остается синхронной
